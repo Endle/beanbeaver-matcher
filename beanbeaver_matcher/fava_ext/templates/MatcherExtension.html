@@ -1,0 +1,33 @@
+<div id="bb-matcher">
+  <h3>Approved receipts awaiting a match</h3>
+  <table id="bb-matcher-receipts">
+    <thead>
+      <tr><th>Date</th><th>Merchant</th><th>Total</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for receipt in extension.receipts() %}
+      <tr data-stage-path="{{ receipt.stage_path }}">
+        <td>{{ "UNKNOWN" if receipt.date_is_placeholder else receipt.date }}</td>
+        <td>{{ receipt.merchant }}</td>
+        <td>${{ receipt.total }}</td>
+        <td><button class="bb-matcher-select" type="button">Find matches</button></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="4">No approved receipts awaiting a match.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div id="bb-matcher-candidates" hidden>
+    <h3>Candidates for <span id="bb-matcher-current-receipt"></span></h3>
+    <p id="bb-matcher-warning"></p>
+    <table>
+      <thead>
+        <tr><th>Confidence</th><th>Date</th><th>Payee</th><th>Amount</th><th>Details</th><th></th></tr>
+      </thead>
+      <tbody id="bb-matcher-candidates-body"></tbody>
+    </table>
+  </div>
+
+  <p id="bb-matcher-status"></p>
+</div>

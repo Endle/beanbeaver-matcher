@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "beanbeaver-matcher"
+version = "0.1.0"
+description = "Match scanned receipts to beancount ledger transactions, as a Fava extension"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.12"
+dependencies = [
+    "beancount>=2.3,<3",
+    "fava>=1.27,<2",
+]
+
+[project.scripts]
+bb-match = "beanbeaver_matcher.launcher:main"
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+]
+dev = [
+    "mypy>=1.8",
+    "ruff>=0.6",
+    "beanbeaver-matcher[test]",
+]
+
+[tool.setuptools]
+include-package-data = true
+packages = [
+    "beanbeaver_matcher",
+    "beanbeaver_matcher.fava_ext",
+]
+
+[tool.setuptools.package-data]
+"beanbeaver_matcher.fava_ext" = ["templates/*.html", "*.js"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+
+[tool.mypy]
+python_version = "3.12"

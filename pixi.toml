@@ -1,0 +1,20 @@
+[workspace]
+channels = ["conda-forge"]
+name = "beanbeaver-matcher"
+platforms = ["linux-64", "osx-64", "osx-arm64", "win-64"]
+version = "0.1.0"
+
+[dependencies]
+python = "3.12.*"
+pip = "*"
+
+[pypi-dependencies]
+beanbeaver-matcher = { path = ".", editable = true, extras = ["dev", "test"] }
+
+[tasks]
+bb-match = "bb-match"
+ruff-check = "ruff check ."
+ruff-format-check = "ruff format --check ."
+mypy = "mypy --config-file pyproject.toml . --ignore-missing-imports --no-error-summary"
+lint = [{ task = "ruff-check" }, { task = "ruff-format-check" }, { task = "mypy" }]
+test = "python -m pytest tests"
