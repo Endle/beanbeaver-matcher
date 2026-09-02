@@ -31,11 +31,13 @@ dev = [
 include-package-data = true
 packages = [
     "beanbeaver_matcher",
+    "beanbeaver_matcher.credit_card",
     "beanbeaver_matcher.fava_ext",
 ]
 
 [tool.setuptools.package-data]
 "beanbeaver_matcher.fava_ext" = ["templates/*.html", "*.js"]
+"beanbeaver_matcher.credit_card" = ["*.toml"]
 
 [tool.ruff]
 line-length = 120

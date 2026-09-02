@@ -1,0 +1,46 @@
+<div id="bb-imports">
+  <h3>Credit-card statements</h3>
+  <p>Supported CSV files in <code>{{ extension.imports_path() }}</code></p>
+  <table id="bb-import-files">
+    <thead>
+      <tr><th>File</th><th>Importer</th><th></th></tr>
+    </thead>
+    <tbody>
+      {% for file in extension.files() %}
+      <tr data-source-id="{{ file.source_id }}">
+        <td>{{ file.name }}</td>
+        <td>{{ file.importer }}</td>
+        <td><button class="bb-import-review" type="button">Review</button></td>
+      </tr>
+      {% else %}
+      <tr><td colspan="3">No supported credit-card CSV files found.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <section id="bb-import-account-section" hidden>
+    <h3>Choose the credit-card account</h3>
+    <label>
+      Account
+      <select id="bb-import-account"></select>
+    </label>
+    <button id="bb-import-account-continue" type="button">Continue</button>
+  </section>
+
+  <section id="bb-import-plan" hidden>
+    <h3>Review <span id="bb-import-current-file"></span></h3>
+    <p>Card account: <code id="bb-import-current-account"></code></p>
+    <datalist id="bb-import-categories"></datalist>
+    <table>
+      <thead>
+        <tr>
+          <th>Skip</th><th>Date</th><th>Payee</th><th>Amount</th><th>Category</th>
+        </tr>
+      </thead>
+      <tbody id="bb-import-plan-body"></tbody>
+    </table>
+    <button id="bb-import-apply" type="button">Import statement</button>
+  </section>
+
+  <p id="bb-import-status" role="status"></p>
+</div>
