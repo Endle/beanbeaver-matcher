@@ -4,14 +4,25 @@ the chosen match. The one UI for beanbeaver-matcher (see README) — no CLI, no 
 
 from __future__ import annotations
 
+from decimal import Decimal, InvalidOperation
 from pathlib import Path
+from typing import cast
 
 from fava.ext import FavaExtensionBase, extension_endpoint
 from fava.helpers import FavaAPIError
 from flask import jsonify, request
 
 from beanbeaver_matcher.apply import apply_match
-from beanbeaver_matcher.config import MatcherConfig, resolve_config
+from beanbeaver_matcher.config import ImportConfig, MatcherConfig, resolve_config, resolve_import_config
+from beanbeaver_matcher.credit_card import (
+    AccountSelectionRequired,
+    ImportApplyError,
+    TransactionEdit,
+    apply_credit_card_import,
+    plan_credit_card_import,
+)
+from beanbeaver_matcher.credit_card.model import CardImporterId
+from beanbeaver_matcher.credit_card.parsers import CardParseError, route_credit_card
 from beanbeaver_matcher.ledger import load_transactions
 from beanbeaver_matcher.receipts import list_approved_receipts, read_receipt
 from beanbeaver_matcher.scoring import resolve_candidates
@@ -129,6 +140,160 @@ class MatcherExtension(FavaExtensionBase):
                 "status": result.status,
                 "matched_receipt_path": str(result.matched_receipt_path) if result.matched_receipt_path else None,
                 "enriched_path": str(result.enriched_path) if result.enriched_path else None,
+                "message": result.message,
+            }
+        )
+
+
+_CARD_IMPORTERS = {"cibc", "bmo", "scotia", "rogers", "mbna", "pcf", "ctfs", "amex"}
+
+
+class ImportsExtension(FavaExtensionBase):
+    """Review and import supported credit-card statement CSV files."""
+
+    report_title = "Imports"
+    has_js_module = True
+
+    def _import_config(self) -> ImportConfig:
+        if not isinstance(self.config, dict):
+            raise FavaAPIError(
+                "beanbeaver_matcher: extension config must be a dict, e.g. "
+                "'custom \"fava-extension\" \"beanbeaver_matcher.fava_ext\" \"{'ledger': '/path'}\"'"
+            )
+        return resolve_import_config(self.config, fava_ledger_path=Path(self.ledger.beancount_file_path))
+
+    def imports_path(self) -> str:
+        return str(self._import_config().imports_dir)
+
+    def files(self) -> list[dict[str, str]]:
+        """Supported statement CSVs available for review."""
+        imports_dir = self._import_config().imports_dir
+        if not imports_dir.is_dir():
+            return []
+        files = []
+        for path in sorted(imports_dir.iterdir(), key=lambda item: item.name.lower()):
+            if not path.is_file() or path.suffix.lower() != ".csv":
+                continue
+            try:
+                importer_id = route_credit_card(path)
+            except CardParseError:
+                continue
+            files.append({"source_id": path.name, "name": path.name, "importer": importer_id.upper()})
+        return files
+
+    def _source_path(self, source_id: object) -> Path:
+        config = self._import_config()
+        source_name = str(source_id or "")
+        if not source_name:
+            raise CardParseError("Missing statement filename")
+        source_path = (config.imports_dir / source_name).resolve()
+        try:
+            source_path.relative_to(config.imports_dir)
+        except ValueError as exc:
+            raise CardParseError("Statement must be inside the configured imports directory") from exc
+        if not source_path.is_file() or source_path.suffix.lower() != ".csv":
+            raise CardParseError(f"Statement not found: {source_name}")
+        return source_path
+
+    @staticmethod
+    def _importer_id(value: object) -> CardImporterId | None:
+        if value is None or value == "":
+            return None
+        importer_id = str(value).lower()
+        if importer_id not in _CARD_IMPORTERS:
+            raise CardParseError(f"Unsupported credit-card importer: {value}")
+        return cast(CardImporterId, importer_id)
+
+    @staticmethod
+    def _plan_payload(plan, source_id: str) -> dict[str, object]:  # noqa: ANN001
+        return {
+            "status": "ready",
+            "source_id": source_id,
+            "source_sha256": plan.source_sha256,
+            "importer_id": plan.importer_id,
+            "account": plan.account,
+            "start_date": plan.start_date.isoformat(),
+            "end_date": plan.end_date.isoformat(),
+            "candidate_categories": plan.candidate_categories,
+            "transactions": [
+                {
+                    "row_id": transaction.row_id,
+                    "date": transaction.date.isoformat(),
+                    "payee": transaction.payee,
+                    "amount": str(transaction.amount),
+                    "currency": transaction.currency,
+                    "category": transaction.category,
+                    "duplicate": transaction.duplicate,
+                }
+                for transaction in plan.transactions
+            ],
+        }
+
+    @extension_endpoint("plan", methods=["GET"])  # type: ignore[arg-type]
+    def plan_endpoint(self):  # noqa: ANN201 - Flask response
+        source_id = request.args.get("source_id", "")
+        try:
+            config = self._import_config()
+            source_path = self._source_path(source_id)
+            plan = plan_credit_card_import(
+                source_path,
+                ledger_path=config.ledger_path,
+                selected_account=request.args.get("selected_account") or None,
+                merchant_rules_path=config.merchant_rules,
+            )
+        except AccountSelectionRequired as exc:
+            return jsonify(
+                {
+                    "status": "needs_account",
+                    "source_id": source_id,
+                    "label": exc.label,
+                    "accounts": exc.options,
+                }
+            )
+        except (CardParseError, ImportApplyError, OSError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 400
+        return jsonify(self._plan_payload(plan, source_id))
+
+    @extension_endpoint("apply", methods=["POST"])  # type: ignore[arg-type]
+    def apply_endpoint(self):  # noqa: ANN201 - Flask response
+        payload = request.get_json(force=True, silent=True) or {}
+        raw_edits = payload.get("edits", [])
+        if not isinstance(raw_edits, list):
+            return jsonify({"error": "edits must be a list"}), 400
+        try:
+            config = self._import_config()
+            source_path = self._source_path(payload.get("source_id"))
+            edits = []
+            for item in raw_edits:
+                if not isinstance(item, dict):
+                    raise CardParseError("Each edit must be an object")
+                raw_amount = item.get("new_amount")
+                new_amount = None if raw_amount in (None, "") else Decimal(str(raw_amount))
+                edits.append(
+                    TransactionEdit(
+                        row_id=str(item.get("row_id", "")),
+                        category=str(item.get("category", "")),
+                        new_amount=new_amount,
+                        deleted=item.get("deleted") is True,
+                    )
+                )
+            result = apply_credit_card_import(
+                source_path,
+                ledger_path=config.ledger_path,
+                records_dir=config.records_dir,
+                selected_account=str(payload.get("account", "")),
+                expected_source_sha256=str(payload.get("source_sha256", "")),
+                edits=tuple(edits),
+                importer_id=self._importer_id(payload.get("importer_id")),
+                merchant_rules_path=config.merchant_rules,
+            )
+        except (CardParseError, ImportApplyError, InvalidOperation, OSError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
+        return jsonify(
+            {
+                "status": result.status,
+                "output_path": str(result.output_path),
+                "transaction_count": result.transaction_count,
                 "message": result.message,
             }
         )

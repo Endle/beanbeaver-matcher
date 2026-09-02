@@ -39,6 +39,14 @@ class MatcherConfig:
     merchant_families: tuple[MerchantFamily, ...] = ()
 
 
+@dataclass(frozen=True)
+class ImportConfig:
+    ledger_path: Path
+    imports_dir: Path
+    records_dir: Path
+    merchant_rules: Path | None = None
+
+
 def resolve_config(options: dict[str, object]) -> MatcherConfig:
     """Build a MatcherConfig from the extension's `custom "fava-extension"` options dict."""
     receipts_value = options.get("receipts")
@@ -52,3 +60,25 @@ def resolve_config(options: dict[str, object]) -> MatcherConfig:
         families = load_merchant_families(Path(str(families_value)).expanduser())
 
     return MatcherConfig(receipts_dir=receipts_dir, merchant_families=families)
+
+
+def resolve_import_config(options: dict[str, object], *, fava_ledger_path: Path) -> ImportConfig:
+    """Resolve statement-import paths, with useful defaults for direct extension use."""
+    ledger_value = options.get("ledger")
+    ledger_path = Path(str(ledger_value)).expanduser() if ledger_value else fava_ledger_path
+    ledger_path = ledger_path.resolve()
+
+    imports_value = options.get("imports")
+    imports_dir = Path(str(imports_value)).expanduser() if imports_value else Path.home() / "Downloads"
+
+    records_value = options.get("records")
+    records_dir = Path(str(records_value)).expanduser() if records_value else ledger_path.parent / "records"
+
+    rules_value = options.get("merchant_rules")
+    merchant_rules = Path(str(rules_value)).expanduser() if rules_value else None
+    return ImportConfig(
+        ledger_path=ledger_path,
+        imports_dir=imports_dir.resolve(),
+        records_dir=records_dir.resolve(),
+        merchant_rules=merchant_rules.resolve() if merchant_rules else None,
+    )

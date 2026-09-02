@@ -1,0 +1,74 @@
+# Public defaults ported from the retiring importer. Project-local rules are
+# loaded first when configured.
+
+[[rules]]
+keywords = ["COSTCO", "COSICO"]
+category = "Expenses:Food:Grocery"
+
+[[rules]]
+keywords = ["T&T SUPERMARKET"]
+category = "Expenses:Food:Grocery"
+
+[[rules]]
+keywords = ["NO FRILLS", "NOFRILLS", "DAVE & ANNETTE'S NO FR", "PETER & SUZI'S NF"]
+category = "Expenses:Food:Grocery"
+
+[[rules]]
+keywords = ["REAL CANADIAN SUPERSTORE"]
+category = "Expenses:Food:Grocery"
+
+[[rules]]
+keywords = ["BESTCO FRESH"]
+category = "Expenses:Food:Grocery"
+
+[[rules]]
+keywords = ["FOODY MART"]
+category = "Expenses:Food:Grocery"
+
+[[rules]]
+keywords = ["TREDISH GROCERIES"]
+category = "Expenses:Food:Grocery"
+
+[[rules]]
+keywords = ["WALMART", "WAL-MART"]
+category = "Expenses:Food:Grocery"
+
+[[rules]]
+keywords = ["SHELL", "ESSO CIRCLE K", "PETRO CANADA"]
+category = "Expenses:Driving:Gas"
+
+[[rules]]
+keywords = ["DRIVE TEST"]
+category = "Expenses:Driving:Test"
+
+[[rules]]
+keywords = ["UBER", "LYFT"]
+category = "Expenses:Travel:Taxi"
+
+[[rules]]
+keywords = ["ALASKA AIRLINES", "ALASKA A ", "AIR CANADA", "AIRCANADA"]
+category = "Expenses:Travel:Air"
+
+[[rules]]
+keywords = ["PARK'N FLY", "PARKN FLY"]
+category = "Expenses:Travel:Parking"
+
+[[rules]]
+keywords = ["SKIP THE DISHES", "SKIPTHEDISHES", "AURIC KING BBQ"]
+category = "Expenses:Food:Restaurant:TakeOut"
+
+[[rules]]
+keywords = ["ONE S BETTER LIVING"]
+category = "Expenses:Home"
+
+[[rules]]
+keywords = ["MINISO"]
+category = "Expenses:Shopping:Miniso"
+
+[[rules]]
+keywords = ["IKEA", "STRUC-TUBE", "STRUC TUBE"]
+category = "Expenses:Home:Furniture"
+
+[[rules]]
+keywords = ["ENERCARE"]
+category = "Expenses:Home:Utility"
