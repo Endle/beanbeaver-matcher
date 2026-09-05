@@ -5,6 +5,7 @@ from decimal import Decimal
 from beanbeaver_matcher.receipts import (
     list_approved_receipts,
     receipt_chain_name,
+    receipt_from_legacy_document,
     receipt_from_stage_document,
 )
 
@@ -117,3 +118,68 @@ def test_list_approved_receipts_skips_scanned_and_matched(tmp_path):
     assert len(approved) == 1
     assert approved[0].stage_path.name == "010_review.receipt.json"
     assert receipt_chain_name(approved[0].stage_path) == "2026-03-02_costco_100_00_bbbb"
+
+
+def test_legacy_receipt_preserves_accounts_and_placeholder_date():
+    receipt = receipt_from_legacy_document(
+        {
+            "merchant": "FOODY MART",
+            "date": None,
+            "dateIsPlaceholder": True,
+            "subtotal": "10.00",
+            "tax": "1.30",
+            "total": "11.30",
+            "items": [
+                {
+                    "description": "MILK",
+                    "price": "10.00",
+                    "quantity": 1,
+                    "account": "Expenses:Food:Grocery:Dairy",
+                },
+                {
+                    "description": "OLD CATEGORY KEY",
+                    "price": "0.00",
+                    "quantity": 1,
+                    "category": "grocery_dairy",
+                },
+            ],
+            "warnings": ["check total"],
+        },
+        image_filename="receipt.jpg",
+    )
+
+    assert receipt.merchant == "FOODY MART"
+    assert receipt.date_is_placeholder is True
+    assert receipt.total == Decimal("11.30")
+    assert receipt.items[0].category == "Expenses:Food:Grocery:Dairy"
+    assert receipt.items[1].category is None
+    assert receipt.image_filename == "receipt.jpg"
+    assert receipt.warnings[0].message == "check total"
+
+
+def test_list_approved_receipts_discovers_only_unmatched_legacy_drafts(tmp_path):
+    def _write_legacy(name: str, *, draft: bool, matched: bool) -> None:
+        chain_dir = tmp_path / name
+        chain_dir.mkdir()
+        document = {
+            "merchant": "FOODY MART",
+            "date": "2026-08-07",
+            "dateIsPlaceholder": False,
+            "total": "81.96",
+            "items": [],
+            "warnings": [],
+        }
+        (chain_dir / f"{name}.json").write_text(json.dumps(document))
+        if draft:
+            (chain_dir / f"{name}.beancount").write_text("")
+        if matched:
+            (chain_dir / f"{name}.matched").write_text("")
+
+    _write_legacy("ready", draft=True, matched=False)
+    _write_legacy("already-matched", draft=True, matched=True)
+    _write_legacy("not-reviewed", draft=False, matched=False)
+
+    approved = list_approved_receipts(tmp_path)
+
+    assert [receipt.stage_path.parent.name for receipt in approved] == ["ready"]
+    assert approved[0].receipt.merchant == "FOODY MART"

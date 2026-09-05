@@ -4,6 +4,7 @@ the chosen match. The one UI for beanbeaver-matcher (see README) — no CLI, no 
 
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import cast
@@ -23,8 +24,17 @@ from beanbeaver_matcher.credit_card import (
 )
 from beanbeaver_matcher.credit_card.model import CardImporterId
 from beanbeaver_matcher.credit_card.parsers import CardParseError, route_credit_card
-from beanbeaver_matcher.ledger import load_transactions
-from beanbeaver_matcher.receipts import list_approved_receipts, read_receipt
+from beanbeaver_matcher.ledger import load_open_accounts, load_transactions
+from beanbeaver_matcher.receipts import (
+    ReceiptEditError,
+    is_legacy_receipt_path,
+    legacy_matched_path,
+    list_approved_receipts,
+    load_stage_document,
+    read_receipt,
+    receipt_sha256,
+    update_legacy_receipt,
+)
 from beanbeaver_matcher.scoring import resolve_candidates
 
 
@@ -45,9 +55,66 @@ class MatcherExtension(FavaExtensionBase):
     def _ledger_path(self) -> Path:
         return Path(self.ledger.beancount_file_path)
 
+    def _legacy_edit_path(self, raw_path: object) -> Path:
+        config = self._matcher_config()
+        if config.legacy_receipts_dir is None:
+            raise ReceiptEditError("Legacy receipt editing is not configured")
+        root = config.legacy_receipts_dir.resolve()
+        path = Path(str(raw_path or "")).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ReceiptEditError("Receipt must be inside the configured legacy receipt directory") from exc
+        if not path.is_file() or not is_legacy_receipt_path(path):
+            raise ReceiptEditError(f"Legacy receipt not found: {path}")
+        if legacy_matched_path(path).exists():
+            raise ReceiptEditError("Matched receipts cannot be edited")
+        return path
+
+    def _receipt_edit_payload(self, path: Path) -> dict[str, object]:
+        receipt = read_receipt(path)
+        source_indices = [
+            index for index, raw in enumerate(load_stage_document(path).get("items") or []) if isinstance(raw, dict)
+        ]
+        accounts, errors = load_open_accounts(self._ledger_path(), as_of=receipt.date)
+        if errors:
+            raise ReceiptEditError(f"Ledger has errors: {errors[0]}")
+        return {
+            "stage_path": str(path),
+            "source_sha256": receipt_sha256(path),
+            "merchant": receipt.merchant,
+            "date": "" if receipt.date_is_placeholder else receipt.date.isoformat(),
+            "subtotal": str(receipt.subtotal) if receipt.subtotal is not None else "",
+            "tax": str(receipt.tax) if receipt.tax is not None else "",
+            "total": str(receipt.total),
+            "accounts": accounts,
+            "items": [
+                {
+                    "source_index": source_index,
+                    "description": item.description,
+                    "price": str(item.price),
+                    "quantity": item.quantity,
+                    "category": item.category or "",
+                }
+                for source_index, item in zip(source_indices, receipt.items, strict=True)
+            ],
+            "tenders": [
+                {
+                    "kind": tender.kind,
+                    "amount": str(tender.amount),
+                    "account": tender.account or "",
+                    "raw_label": tender.raw_label,
+                }
+                for tender in receipt.tenders
+            ],
+        }
+
     def receipts(self) -> list[dict[str, object]]:
         """Approved receipts awaiting a match, for the report template."""
         config = self._matcher_config()
+        approved_receipts = list_approved_receipts(config.receipts_dir)
+        if config.legacy_receipts_dir is not None:
+            approved_receipts.extend(list_approved_receipts(config.legacy_receipts_dir))
         return [
             {
                 "stage_path": str(approved.stage_path),
@@ -55,9 +122,40 @@ class MatcherExtension(FavaExtensionBase):
                 "date": approved.receipt.date.isoformat(),
                 "date_is_placeholder": approved.receipt.date_is_placeholder,
                 "total": str(approved.receipt.total),
+                "editable": is_legacy_receipt_path(approved.stage_path),
             }
-            for approved in list_approved_receipts(config.receipts_dir)
+            for approved in approved_receipts
         ]
+
+    @extension_endpoint("receipt", methods=["GET"])  # type: ignore[arg-type]
+    def receipt_endpoint(self):  # noqa: ANN201 - Flask response
+        try:
+            path = self._legacy_edit_path(request.args.get("stage_path"))
+            return jsonify(self._receipt_edit_payload(path))
+        except (ReceiptEditError, OSError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 400
+
+    @extension_endpoint("edit-receipt", methods=["POST"])  # type: ignore[arg-type]
+    def edit_receipt_endpoint(self):  # noqa: ANN201 - Flask response
+        payload = request.get_json(force=True, silent=True) or {}
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Receipt edit must be an object"}), 400
+        try:
+            path = self._legacy_edit_path(payload.get("stage_path"))
+            raw_date = str(payload.get("date") or "").strip()
+            as_of = date.fromisoformat(raw_date) if raw_date else read_receipt(path).date
+            accounts, errors = load_open_accounts(self._ledger_path(), as_of=as_of)
+            if errors:
+                raise ReceiptEditError(f"Ledger has errors: {errors[0]}")
+            update_legacy_receipt(
+                path,
+                payload,
+                expected_sha256=str(payload.get("source_sha256") or ""),
+                allowed_accounts=set(accounts),
+            )
+            return jsonify({"status": "saved", **self._receipt_edit_payload(path)})
+        except (ReceiptEditError, OSError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
 
     @extension_endpoint("candidates", methods=["GET"])  # type: ignore[arg-type]
     def candidates_endpoint(self):  # noqa: ANN201 - Flask response

@@ -46,12 +46,24 @@ This tool reads staged receipt JSON files directly (schema version `"2"`, the sa
 `beanbeaver` writes under each receipt chain's `stages/` directory). It does **not** depend on
 `beanbeaver-core`; see `beanbeaver_matcher/receipts.py` for the fields it reads.
 
+For ledgers created by older BeanBeaver versions, `legacy_receipts` can point to the flat
+per-receipt directory. A legacy JSON is offered for matching when its sibling `.beancount`
+draft exists and no sibling `.matched` marker exists. Matching preserves explicit item account
+names and creates the legacy empty `.matched` marker.
+
+Legacy receipts can be edited from the Matcher report before choosing a candidate. The editor
+supports merchant/date/amount fields, item accounts, and payment tenders. Split payments must
+include a card tender plus any gift-card, cash, or store-credit tender, and tender amounts must
+sum to the full receipt total.
+
 ## Configuration
 
 Extension options (in the ledger's `custom "fava-extension"` directive):
 
 - `receipts` (required by the Matcher report): path to the directory of receipt chains to scan
   for approved/unmatched receipts.
+- `legacy_receipts` (optional): path to older flat receipt directories containing sibling
+  `.json`, `.beancount`, and optional `.matched` files.
 - `merchant_families` (optional): path to a TOML file of merchant alias families (same format as
   beanbeaver's `merchant_families.toml`).
 - `ledger` (recommended for Imports): path to the real main ledger. `bb-match` sets this because

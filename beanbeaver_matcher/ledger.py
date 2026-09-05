@@ -8,6 +8,7 @@ called into via PyO3.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import date
 from pathlib import Path
 
 from beancount import loader
@@ -75,3 +76,19 @@ def load_transactions(ledger_path: Path | str) -> LedgerSnapshot:
         )
 
     return LedgerSnapshot(path=str(ledger_path), transactions=transactions, errors=_format_errors(errors))
+
+
+def load_open_accounts(ledger_path: Path | str, *, as_of: date) -> tuple[list[str], list[str]]:
+    """Return accounts open on a date plus any ledger errors."""
+    entries, errors, _options = loader.load_file(str(ledger_path))
+    opened: dict[str, date] = {}
+    closed: dict[str, date] = {}
+    for entry in entries:
+        if isinstance(entry, data.Open) and entry.date <= as_of:
+            opened[entry.account] = entry.date
+        elif isinstance(entry, data.Close) and entry.date <= as_of:
+            closed[entry.account] = entry.date
+    accounts = sorted(
+        account for account, opened_on in opened.items() if account not in closed or opened_on > closed[account]
+    )
+    return accounts, _format_errors(errors)

@@ -17,6 +17,7 @@ def build_wrapper_content(
     records_dir: Path | None = None,
     merchant_rules: Path | None = None,
     chequing_rules: Path | None = None,
+    legacy_receipts_dir: Path | None = None,
 ) -> str:
     """The temp `_fava.beancount` Fava is started on: a `fava-extension` custom directive
     plus an `include` of the real ledger. Paths are POSIX-slashed to avoid backslash
@@ -36,6 +37,8 @@ def build_wrapper_content(
         config["merchant_rules"] = merchant_rules.as_posix()
     if chequing_rules is not None:
         config["chequing_rules"] = chequing_rules.as_posix()
+    if legacy_receipts_dir is not None:
+        config["legacy_receipts"] = legacy_receipts_dir.as_posix()
     config_literal = repr(config)
 
     return (
@@ -51,6 +54,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--receipts", type=Path, required=True, help="Path to the receipt chains directory")
     parser.add_argument(
         "--merchant-families", type=Path, default=None, help="Path to a merchant_families.toml (optional)"
+    )
+    parser.add_argument(
+        "--legacy-receipts",
+        type=Path,
+        default=None,
+        help="Path to legacy flat receipt directories (optional)",
     )
     parser.add_argument(
         "--imports",
@@ -89,6 +98,7 @@ def main(argv: list[str] | None = None) -> None:
     records_dir = (args.records or (ledger_path.parent / "records")).expanduser().resolve()
     merchant_rules = args.merchant_rules.expanduser().resolve() if args.merchant_rules else None
     chequing_rules = args.chequing_rules.expanduser().resolve() if args.chequing_rules else None
+    legacy_receipts_dir = args.legacy_receipts.expanduser().resolve() if args.legacy_receipts else None
 
     from fava.application import create_app
 
@@ -103,6 +113,7 @@ def main(argv: list[str] | None = None) -> None:
                 records_dir,
                 merchant_rules,
                 chequing_rules,
+                legacy_receipts_dir,
             )
         )
 

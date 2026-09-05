@@ -11,6 +11,7 @@ LEDGER = """
 2024-01-01 open Liabilities:CreditCard:CardA
 2024-01-01 open Expenses:Uncategorized
 2024-01-01 open Expenses:FIXME
+2024-01-01 open Expenses:Food:Grocery:Drink
 
 2024-01-05 * "COSTCO" "Groceries"
   Liabilities:CreditCard:CardA  -54.20 CAD
@@ -44,6 +45,26 @@ def _write_receipt(tmp_path, *, merchant="COSTCO", date_str="2024-01-05", total=
     stage_path = stages_dir / "010_review.receipt.json"
     stage_path.write_text(json.dumps(document))
     return stage_path
+
+
+def test_already_enriched_transaction_cannot_be_matched_again(tmp_path):
+    enriched_dir = tmp_path / "_enriched"
+    enriched_dir.mkdir()
+    ledger_path = _write_ledger(enriched_dir)
+    stage_path = _write_receipt(tmp_path)
+    before = ledger_path.read_bytes()
+    receipt_before = stage_path.read_bytes()
+    snapshot = load_transactions(ledger_path)
+    resolved = resolve_candidates(read_receipt(stage_path), snapshot.transactions)
+    assert resolved.candidates == []
+    assert "already itemized" in resolved.warning
+    assert str(ledger_path) in resolved.warning
+    # A stale or direct caller must not bypass candidate filtering.
+    result = apply_match(stage_path, Candidate(snapshot.transactions[0], 0.98, "exact"), ledger_path=ledger_path)
+    assert result.status == "target_already_matched"
+    assert ledger_path.read_bytes() == before
+    assert stage_path.read_bytes() == receipt_before
+    assert not (enriched_dir / "_enriched").exists()
 
 
 def test_apply_match_replaces_transaction_writes_enriched_and_archives_receipt(tmp_path):
@@ -125,3 +146,74 @@ def test_apply_match_reports_target_missing_when_file_deleted(tmp_path):
     result = apply_match(stage_path, candidate, ledger_path=ledger_path)
 
     assert result.status == "target_missing"
+
+
+def test_apply_match_archives_legacy_receipt_and_preserves_item_account(tmp_path):
+    ledger_path = _write_ledger(tmp_path)
+    chain_dir = tmp_path / "legacy-receipts" / "2024-01-05_costco_54_20_aaaa"
+    chain_dir.mkdir(parents=True)
+    receipt_path = chain_dir / "2024-01-05_costco_54_20_aaaa.json"
+    receipt_path.write_text(
+        json.dumps(
+            {
+                "merchant": "COSTCO",
+                "date": "2024-01-05",
+                "dateIsPlaceholder": False,
+                "total": "54.20",
+                "items": [
+                    {
+                        "description": "COKE ZERO",
+                        "price": "54.20",
+                        "quantity": 1,
+                        "account": "Expenses:Food:Grocery:Drink",
+                    }
+                ],
+                "warnings": [],
+            }
+        )
+    )
+    receipt_path.with_suffix(".beancount").write_text("")
+    receipt_path.with_suffix(".jpg").write_text("")
+
+    snapshot = load_transactions(ledger_path)
+    candidate = resolve_candidates(read_receipt(receipt_path), snapshot.transactions).candidates[0]
+    result = apply_match(receipt_path, candidate, ledger_path=ledger_path)
+
+    assert result.status == "applied"
+    assert result.matched_receipt_path == receipt_path.with_suffix(".matched")
+    assert result.matched_receipt_path.is_file()
+    assert result.enriched_path is not None
+    assert "Expenses:Food:Grocery:Drink" in result.enriched_path.read_text()
+
+
+def test_apply_match_accepts_full_itemized_total_with_split_tenders(tmp_path):
+    ledger_path = tmp_path / "main.beancount"
+    ledger_path.write_text(
+        "2024-01-01 open Liabilities:CreditCard:CardA\n"
+        "2024-01-01 open Assets:PrepaidCard:GiftCard\n"
+        "2024-01-01 open Expenses:Food:Grocery\n\n"
+        "2024-01-01 open Expenses:FIXME\n\n"
+        '2024-01-05 * "COSTCO" "Groceries"\n'
+        "  Liabilities:CreditCard:CardA  -44.20 CAD\n"
+        "  Expenses:Food:Grocery          44.20 CAD\n"
+    )
+    stage_path = _write_receipt(tmp_path, total="54.20")
+    document = load_stage_document(stage_path)
+    document["items"][0]["price"] = "54.20"
+    document["tenders"] = [
+        {"kind": "gift_card", "amount": "10.00", "account": "Assets:PrepaidCard:GiftCard"},
+        {"kind": "card", "amount": "44.20", "account": None},
+    ]
+    stage_path.write_text(json.dumps(document))
+
+    snapshot = load_transactions(ledger_path)
+    candidate = resolve_candidates(read_receipt(stage_path), snapshot.transactions).candidates[0]
+    result = apply_match(stage_path, candidate, ledger_path=ledger_path)
+
+    assert result.status == "applied"
+    assert result.enriched_path is not None
+    enriched = result.enriched_path.read_text()
+    assert "Liabilities:CreditCard:CardA" in enriched
+    assert "-44.20 CAD" in enriched
+    assert "Assets:PrepaidCard:GiftCard" in enriched
+    assert "-10.00 CAD" in enriched

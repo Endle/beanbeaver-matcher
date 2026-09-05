@@ -2,6 +2,8 @@ from datetime import date
 from decimal import Decimal
 from typing import Any
 
+import pytest
+
 from beanbeaver_matcher.enrich import format_enriched_transaction
 from beanbeaver_matcher.model import Candidate, LedgerPosting, LedgerTransaction, Receipt, ReceiptItem, Tender
 
@@ -113,3 +115,35 @@ def test_enriched_transaction_warns_when_items_exceed_transaction():
     out = format_enriched_transaction(receipt, candidate)
 
     assert "WARNING: items total (50.00) exceeds transaction (10.00)" in out
+
+
+@pytest.mark.parametrize("discount_first", [True, False])
+@pytest.mark.parametrize("split", [True, False])
+def test_negative_discount_never_replaces_card_posting(discount_first, split):
+    discount = LedgerPosting("Expenses:FIXME", Decimal("-25.00"), "CAD")
+    postings = list(_txn().postings)
+    postings.insert(0 if discount_first else len(postings), discount)
+    txn = _txn(postings=tuple(postings))
+    assert txn.charge_account == "Liabilities:CreditCard:Visa"
+    assert txn.charge_amount == Decimal("20.00")
+    receipt = _receipt(
+        total=Decimal("25.00") if split else Decimal("20.00"),
+        tenders=[Tender(Decimal("20.00")), Tender(Decimal("5.00"), "Assets:GiftCards:Costco", "gift_card")]
+        if split
+        else [],
+    )
+    out = format_enriched_transaction(receipt, Candidate(txn, 0.98, "exact"))
+    active = out.split("; --- Original Transaction")[0]
+    card_line = next(line for line in active.splitlines() if line.startswith("  Liabilities:"))
+    assert "Liabilities:CreditCard:Visa" in card_line
+    assert "-20.00 CAD" in card_line
+
+
+def test_expense_refund_is_not_a_card_charge():
+    txn = _txn(
+        postings=(
+            LedgerPosting("Expenses:FIXME", Decimal("-20.00"), "CAD"),
+            LedgerPosting("Liabilities:CreditCard:Visa", Decimal("20.00"), "CAD"),
+        )
+    )
+    assert txn.charge_amount is None

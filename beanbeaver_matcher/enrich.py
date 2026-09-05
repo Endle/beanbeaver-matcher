@@ -95,16 +95,14 @@ def format_enriched_transaction(
     narration = _quote_escape(txn.narration or "")
     lines.append(f'{txn.date.isoformat()} * "{payee}" "{narration}"')
 
-    cc_account: str | None = None
-    cc_amount: Decimal | None = None
+    charge = txn.charge_posting
+    cc_account = charge.account if charge else None
+    cc_amount = charge.number if charge else None
     original_expense: str | None = None
     for posting in txn.postings:
         if posting.number is None:
             continue
-        if posting.number < 0:
-            cc_account = posting.account
-            cc_amount = posting.number
-        elif posting.number > 0:
+        if posting.number > 0 and posting.account.startswith("Expenses:"):
             original_expense = posting.account
 
     expense_base = original_expense or default_expense

@@ -132,6 +132,12 @@ def _replace_transaction_with_include(
 
 def move_to_matched(stage_path: Path) -> Path:
     """Write a new "matched" stage for one receipt chain; returns the new stage file path."""
+    if receipts.is_legacy_receipt_path(stage_path):
+        matched_path = receipts.legacy_matched_path(stage_path)
+        if not matched_path.exists():
+            matched_path.write_text("")
+        return matched_path
+
     document = receipts.load_stage_document(stage_path)
     if receipts.stage_status(document) == "matched":
         return stage_path
@@ -173,6 +179,13 @@ def apply_match(
     receipt = receipts.read_receipt(stage_path)
     txn = candidate.transaction
 
+    if txn.is_enriched:
+        return ApplyResult(
+            status="target_already_matched",
+            ledger_path=ledger_path,
+            message="This transaction is already itemized from a matched receipt; it cannot be matched again.",
+        )
+
     matched_file = Path(txn.file_path)
     if txn.file_path == "unknown" or not matched_file.exists():
         return ApplyResult(
@@ -183,14 +196,15 @@ def apply_match(
 
     expected_total = txn.charge_amount
     if expected_total is not None:
-        delta = expected_total - receipt.itemized_total
+        expected_itemized_total = receipt.total if receipt.tenders else expected_total
+        delta = expected_itemized_total - receipt.itemized_total
         if delta < Decimal("-0.01"):
             return ApplyResult(
                 status="receipt_total_exceeds_transaction",
                 ledger_path=ledger_path,
                 message=(
-                    f"Itemized receipt total (${receipt.itemized_total:.2f}) exceeds card transaction "
-                    f"(${expected_total:.2f}) by ${abs(delta):.2f}. Re-edit the receipt first."
+                    f"Itemized receipt total (${receipt.itemized_total:.2f}) exceeds expected receipt total "
+                    f"(${expected_itemized_total:.2f}) by ${abs(delta):.2f}. Re-edit the receipt first."
                 ),
             )
 
