@@ -1,5 +1,5 @@
 <div id="bb-imports">
-  <h3>Credit-card statements</h3>
+  <h3>Statements</h3>
   <p>Supported CSV files in <code>{{ extension.imports_path() }}</code></p>
   <table id="bb-import-files">
     <thead>
@@ -13,13 +13,13 @@
         <td><button class="bb-import-review" type="button">Review</button></td>
       </tr>
       {% else %}
-      <tr><td colspan="3">No supported credit-card CSV files found.</td></tr>
+      <tr><td colspan="3">No supported statement CSV files found.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 
   <section id="bb-import-account-section" hidden>
-    <h3>Choose the credit-card account</h3>
+    <h3>Choose the ledger account</h3>
     <label>
       Account
       <select id="bb-import-account"></select>
@@ -29,7 +29,7 @@
 
   <section id="bb-import-plan" hidden>
     <h3>Review <span id="bb-import-current-file"></span></h3>
-    <p>Card account: <code id="bb-import-current-account"></code></p>
+    <p>Account: <code id="bb-import-current-account"></code></p>
     <datalist id="bb-import-categories"></datalist>
     <table>
       <thead>

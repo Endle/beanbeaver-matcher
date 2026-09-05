@@ -13,6 +13,7 @@ from beanbeaver_matcher.credit_card.model import CardImporterId, ParsedCardRow
 
 _TRANSACTIONS_DOWNLOAD_RE = re.compile(r"^transactions(?: \(\d+\))?\.csv$", re.IGNORECASE)
 _MBNA_MONTHLY_RE = re.compile(r"^[A-Za-z]+20\d{2}_\d{4}\.csv$")
+_WEALTHSIMPLE_EXPORT_RE = re.compile(r"^activities-export-\d{4}-\d{2}-\d{2}(?: \(\d+\))?\.csv$", re.IGNORECASE)
 
 
 class CardParseError(ValueError):
@@ -37,6 +38,14 @@ def route_credit_card(path: Path) -> CardImporterId:
     header0 = _header(path)
     header2 = _header(path, skip_rows=2)
     header3 = _header(path, skip_rows=3)
+
+    wealthsimple_date_columns = {"effective_date", "transaction_date"}
+    if (
+        _WEALTHSIMPLE_EXPORT_RE.fullmatch(name)
+        and wealthsimple_date_columns.intersection(header0)
+        and {"account_type", "activity_type", "description", "net_cash_amount"}.issubset(header0)
+    ):
+        return "wealthsimple_chequing"
 
     if {"date", "merchant name", "amount"}.issubset(header0):
         return "rogers"
@@ -195,6 +204,24 @@ def _parse_amex(path: Path) -> list[ParsedCardRow]:
     ]
 
 
+def _parse_wealthsimple_chequing(path: Path) -> list[ParsedCardRow]:
+    rows = []
+    for index, row in _dict_rows(path):
+        if row.get("account_type", "").strip().lower() != "chequing":
+            continue
+        raw_amount = row.get("net_cash_amount", "").strip()
+        raw_date = (row.get("effective_date") or row.get("transaction_date") or "").strip()
+        if not raw_amount or not raw_date:
+            continue
+        payee = re.sub(r"\s*\(executed at \d{4}-\d{2}-\d{2}\)\s*$", "", row.get("description", "")).strip()
+        currency = row.get("currency", "").strip() or "CAD"
+        # Import plans represent the counter-posting amount. Wealthsimple exports
+        # the signed cash-account amount, so invert it here.
+        parsed = _parsed(index, _date(raw_date, "%Y-%m-%d"), payee, -_decimal(raw_amount))
+        rows.append(ParsedCardRow(parsed.row_id, parsed.date, parsed.payee, parsed.amount, currency))
+    return rows
+
+
 _PARSERS: dict[CardImporterId, Callable[[Path], list[ParsedCardRow]]] = {
     "cibc": _parse_cibc,
     "bmo": _parse_bmo,
@@ -204,6 +231,7 @@ _PARSERS: dict[CardImporterId, Callable[[Path], list[ParsedCardRow]]] = {
     "pcf": _parse_pcf,
     "ctfs": _parse_ctfs,
     "amex": _parse_amex,
+    "wealthsimple_chequing": _parse_wealthsimple_chequing,
 }
 
 

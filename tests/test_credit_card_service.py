@@ -80,9 +80,7 @@ def test_apply_writes_reachable_statement_and_is_idempotent_by_source_hash(tmp_p
     ledger_path, records_dir = _write_ledger(tmp_path)
     statement = _write_statement(tmp_path)
     plan = plan_credit_card_import(statement, ledger_path=ledger_path)
-    edits = (
-        TransactionEdit(row_id="2", category="Expenses:Food:Grocery", new_amount=Decimal("4.50")),
-    )
+    edits = (TransactionEdit(row_id="2", category="Expenses:Food:Grocery", new_amount=Decimal("4.50")),)
 
     result = apply_credit_card_import(
         statement,
@@ -131,3 +129,59 @@ def test_apply_rejects_a_statement_changed_after_review_without_writing(tmp_path
         )
 
     assert list((records_dir / "2024").glob("cibc_*.beancount")) == []
+
+
+def test_wealthsimple_chequing_plan_detects_duplicates_and_preserves_cash_flow_signs(tmp_path):
+    records_dir = tmp_path / "records"
+    year_dir = records_dir / "2026"
+    year_dir.mkdir(parents=True)
+    (year_dir / "2026.beancount").write_text("")
+    ledger_path = tmp_path / "main.beancount"
+    ledger_path.write_text(
+        'include "records/2026/2026.beancount"\n\n'
+        "2020-01-01 open Assets:Bank:Chequing:Wealthsimple CAD\n"
+        "2020-01-01 open Liabilities:CreditCard:MBNA:Primary CAD\n"
+        "2020-01-01 open Expenses:Uncategorized CAD\n"
+        "2020-01-01 open Income:Promotion CAD\n"
+        "2020-01-01 open Income:Salary CAD\n\n"
+        '2026-07-03 * "Giveaway received" ""\n'
+        "  Assets:Bank:Chequing:Wealthsimple   56.96 CAD\n"
+        "  Income:Promotion                  -56.96 CAD\n"
+    )
+    statement = tmp_path / "activities-export-2026-09-04.csv"
+    statement.write_text(
+        "effective_date,account_type,activity_type,description,currency,net_cash_amount\n"
+        "2026-07-03,Chequing,BonusPayment,Giveaway received,CAD,56.96\n"
+        "2026-07-28,Chequing,MoneyMovement,Online bill payment (executed at 2026-07-28),CAD,-497.86\n"
+    )
+    rules = tmp_path / "chequing_rules.toml"
+    rules.write_text(
+        '[[rules]]\npattern = "GIVEAWAY"\naccount = "Income:Promotion"\n\n'
+        '[[rules]]\npattern = "ONLINE BILL PAYMENT"\naccount = "Liabilities:CreditCard:MBNA:Primary"\n'
+    )
+
+    plan = plan_credit_card_import(statement, ledger_path=ledger_path, chequing_rules_path=rules)
+
+    assert plan.importer_id == "wealthsimple_chequing"
+    assert plan.account == "Assets:Bank:Chequing:Wealthsimple"
+    assert plan.transactions[0].duplicate is True
+    assert plan.transactions[0].amount == Decimal("-56.96")
+    assert plan.transactions[0].category == "Income:Promotion"
+    assert plan.transactions[1].amount == Decimal("497.86")
+    assert plan.transactions[1].category == "Liabilities:CreditCard:MBNA:Primary"
+
+    result = apply_credit_card_import(
+        statement,
+        ledger_path=ledger_path,
+        records_dir=records_dir,
+        selected_account=plan.account,
+        expected_source_sha256=plan.source_sha256,
+        edits=(TransactionEdit(row_id="1", category="Income:Promotion", deleted=True),),
+        importer_id=plan.importer_id,
+        chequing_rules_path=rules,
+    )
+
+    assert result.output_path.name == "wealthsimple_chequing_0703_0728.beancount"
+    output = result.output_path.read_text()
+    assert "Assets:Bank:Chequing:Wealthsimple  -497.86 CAD" in output
+    assert "Liabilities:CreditCard:MBNA:Primary  497.86 CAD" in output

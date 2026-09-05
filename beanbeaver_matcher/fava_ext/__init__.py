@@ -145,11 +145,21 @@ class MatcherExtension(FavaExtensionBase):
         )
 
 
-_CARD_IMPORTERS = {"cibc", "bmo", "scotia", "rogers", "mbna", "pcf", "ctfs", "amex"}
+_STATEMENT_IMPORTERS = {
+    "cibc",
+    "bmo",
+    "scotia",
+    "rogers",
+    "mbna",
+    "pcf",
+    "ctfs",
+    "amex",
+    "wealthsimple_chequing",
+}
 
 
 class ImportsExtension(FavaExtensionBase):
-    """Review and import supported credit-card statement CSV files."""
+    """Review and import supported credit-card and chequing statement CSV files."""
 
     report_title = "Imports"
     has_js_module = True
@@ -178,7 +188,8 @@ class ImportsExtension(FavaExtensionBase):
                 importer_id = route_credit_card(path)
             except CardParseError:
                 continue
-            files.append({"source_id": path.name, "name": path.name, "importer": importer_id.upper()})
+            importer_label = "WEALTHSIMPLE CHEQUING" if importer_id == "wealthsimple_chequing" else importer_id.upper()
+            files.append({"source_id": path.name, "name": path.name, "importer": importer_label})
         return files
 
     def _source_path(self, source_id: object) -> Path:
@@ -200,8 +211,8 @@ class ImportsExtension(FavaExtensionBase):
         if value is None or value == "":
             return None
         importer_id = str(value).lower()
-        if importer_id not in _CARD_IMPORTERS:
-            raise CardParseError(f"Unsupported credit-card importer: {value}")
+        if importer_id not in _STATEMENT_IMPORTERS:
+            raise CardParseError(f"Unsupported statement importer: {value}")
         return cast(CardImporterId, importer_id)
 
     @staticmethod
@@ -240,6 +251,7 @@ class ImportsExtension(FavaExtensionBase):
                 ledger_path=config.ledger_path,
                 selected_account=request.args.get("selected_account") or None,
                 merchant_rules_path=config.merchant_rules,
+                chequing_rules_path=config.chequing_rules,
             )
         except AccountSelectionRequired as exc:
             return jsonify(
@@ -286,6 +298,7 @@ class ImportsExtension(FavaExtensionBase):
                 edits=tuple(edits),
                 importer_id=self._importer_id(payload.get("importer_id")),
                 merchant_rules_path=config.merchant_rules,
+                chequing_rules_path=config.chequing_rules,
             )
         except (CardParseError, ImportApplyError, InvalidOperation, OSError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 409

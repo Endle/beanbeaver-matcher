@@ -16,6 +16,7 @@ def build_wrapper_content(
     imports_dir: Path | None = None,
     records_dir: Path | None = None,
     merchant_rules: Path | None = None,
+    chequing_rules: Path | None = None,
 ) -> str:
     """The temp `_fava.beancount` Fava is started on: a `fava-extension` custom directive
     plus an `include` of the real ledger. Paths are POSIX-slashed to avoid backslash
@@ -33,6 +34,8 @@ def build_wrapper_content(
         config["records"] = records_dir.as_posix()
     if merchant_rules is not None:
         config["merchant_rules"] = merchant_rules.as_posix()
+    if chequing_rules is not None:
+        config["chequing_rules"] = chequing_rules.as_posix()
     config_literal = repr(config)
 
     return (
@@ -67,6 +70,12 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="Project merchant_rules.toml used before bundled defaults",
     )
+    parser.add_argument(
+        "--chequing-rules",
+        type=Path,
+        default=None,
+        help="Project chequing_rules.toml used for chequing counter-accounts",
+    )
     parser.add_argument("--host", default="localhost")
     parser.add_argument("--port", type=int, default=5000)
     args = parser.parse_args(argv)
@@ -79,6 +88,7 @@ def main(argv: list[str] | None = None) -> None:
     imports_dir = (args.imports or (Path.home() / "Downloads")).expanduser().resolve()
     records_dir = (args.records or (ledger_path.parent / "records")).expanduser().resolve()
     merchant_rules = args.merchant_rules.expanduser().resolve() if args.merchant_rules else None
+    chequing_rules = args.chequing_rules.expanduser().resolve() if args.chequing_rules else None
 
     from fava.application import create_app
 
@@ -92,6 +102,7 @@ def main(argv: list[str] | None = None) -> None:
                 imports_dir,
                 records_dir,
                 merchant_rules,
+                chequing_rules,
             )
         )
 
