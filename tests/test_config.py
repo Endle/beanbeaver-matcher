@@ -14,6 +14,17 @@ def test_resolve_config_reads_receipts_dir(tmp_path):
     assert config.merchant_families == ()
 
 
+def test_resolve_config_reads_optional_legacy_receipts_dir(tmp_path):
+    config = resolve_config(
+        {
+            "receipts": str(tmp_path / "receipts"),
+            "legacy_receipts": str(tmp_path / "beanbeaver_receipts"),
+        }
+    )
+
+    assert config.legacy_receipts_dir == tmp_path / "beanbeaver_receipts"
+
+
 def test_resolve_config_loads_merchant_families_toml(tmp_path):
     toml_path = tmp_path / "merchant_families.toml"
     toml_path.write_text(

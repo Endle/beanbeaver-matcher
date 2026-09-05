@@ -36,6 +36,7 @@ def load_merchant_families(path: Path) -> tuple[MerchantFamily, ...]:
 @dataclass(frozen=True)
 class MatcherConfig:
     receipts_dir: Path
+    legacy_receipts_dir: Path | None = None
     merchant_families: tuple[MerchantFamily, ...] = ()
 
 
@@ -54,13 +55,19 @@ def resolve_config(options: dict[str, object]) -> MatcherConfig:
     if not receipts_value:
         raise ValueError('beanbeaver_matcher requires a "receipts" extension option (path to receipt chains)')
     receipts_dir = Path(str(receipts_value)).expanduser()
+    legacy_receipts_value = options.get("legacy_receipts")
+    legacy_receipts_dir = Path(str(legacy_receipts_value)).expanduser() if legacy_receipts_value else None
 
     families: tuple[MerchantFamily, ...] = ()
     families_value = options.get("merchant_families")
     if families_value:
         families = load_merchant_families(Path(str(families_value)).expanduser())
 
-    return MatcherConfig(receipts_dir=receipts_dir, merchant_families=families)
+    return MatcherConfig(
+        receipts_dir=receipts_dir,
+        legacy_receipts_dir=legacy_receipts_dir,
+        merchant_families=families,
+    )
 
 
 def resolve_import_config(options: dict[str, object], *, fava_ledger_path: Path) -> ImportConfig:

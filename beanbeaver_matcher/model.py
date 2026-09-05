@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
+from pathlib import Path
 from typing import Literal
 
 TenderKind = Literal["card", "gift_card", "cash", "store_credit"]
@@ -109,19 +110,31 @@ class LedgerTransaction:
     line_number: int
 
     @property
+    def is_enriched(self) -> bool:
+        """Generated receipt entries have already replaced a statement charge."""
+        return "_enriched" in Path(self.file_path).parts
+
+    @property
+    def charge_posting(self) -> LedgerPosting | None:
+        """Select the funding posting, never an expense discount or refund."""
+        negative = [p for p in self.postings if p.number is not None and p.number < 0]
+        liabilities = [p for p in negative if p.account.startswith("Liabilities:")]
+        if len(liabilities) == 1:
+            return liabilities[0]
+        if liabilities:
+            return None
+        assets = [p for p in negative if p.account.startswith("Assets:")]
+        return assets[0] if len(assets) == 1 else None
+
+    @property
     def charge_amount(self) -> Decimal | None:
-        """Absolute value of the first negative posting amount (the card charge)."""
-        for posting in self.postings:
-            if posting.number is not None and posting.number < 0:
-                return abs(posting.number)
-        return None
+        posting = self.charge_posting
+        return abs(posting.number) if posting is not None and posting.number is not None else None
 
     @property
     def charge_account(self) -> str | None:
-        for posting in self.postings:
-            if posting.number is not None and posting.number < 0:
-                return posting.account
-        return None
+        posting = self.charge_posting
+        return posting.account if posting is not None else None
 
 
 @dataclass(frozen=True)

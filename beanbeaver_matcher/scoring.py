@@ -351,9 +351,20 @@ def resolve_candidates(
     merchant_families: Sequence[MerchantFamily] = (),
 ) -> ResolvedCandidates:
     """Strict match; fall back to relaxed, then amount/date-only, tiers for manual review."""
+    enriched = [txn for txn in transactions if txn.is_enriched]
+    transactions = [txn for txn in transactions if not txn.is_enriched]
     strict = match_receipt_to_transactions(receipt, transactions, strict_config(), merchant_families, "strict")
     if strict:
         return ResolvedCandidates(candidates=strict, used_relaxed_threshold=False, warning=None)
+
+    previous = match_receipt_to_transactions(receipt, enriched, strict_config(), merchant_families, "strict")
+    if previous:
+        return ResolvedCandidates(
+            candidates=[],
+            used_relaxed_threshold=False,
+            warning="A matching transaction is already itemized from another receipt: "
+            f"{previous[0].transaction.file_path}. Review that existing match before importing this receipt again.",
+        )
 
     relaxed = match_receipt_to_transactions(receipt, transactions, relaxed_config(), merchant_families, "relaxed")
     if relaxed:
