@@ -215,9 +215,7 @@ def _parse_wealthsimple_chequing(path: Path) -> list[ParsedCardRow]:
             continue
         payee = re.sub(r"\s*\(executed at \d{4}-\d{2}-\d{2}\)\s*$", "", row.get("description", "")).strip()
         currency = row.get("currency", "").strip() or "CAD"
-        # Import plans represent the counter-posting amount. Wealthsimple exports
-        # the signed cash-account amount, so invert it here.
-        parsed = _parsed(index, _date(raw_date, "%Y-%m-%d"), payee, -_decimal(raw_amount))
+        parsed = _parsed(index, _date(raw_date, "%Y-%m-%d"), payee, _decimal(raw_amount))
         rows.append(ParsedCardRow(parsed.row_id, parsed.date, parsed.payee, parsed.amount, currency))
     return rows
 

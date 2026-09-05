@@ -165,9 +165,9 @@ def test_wealthsimple_chequing_plan_detects_duplicates_and_preserves_cash_flow_s
     assert plan.importer_id == "wealthsimple_chequing"
     assert plan.account == "Assets:Bank:Chequing:Wealthsimple"
     assert plan.transactions[0].duplicate is True
-    assert plan.transactions[0].amount == Decimal("-56.96")
+    assert plan.transactions[0].amount == Decimal("56.96")
     assert plan.transactions[0].category == "Income:Promotion"
-    assert plan.transactions[1].amount == Decimal("497.86")
+    assert plan.transactions[1].amount == Decimal("-497.86")
     assert plan.transactions[1].category == "Liabilities:CreditCard:MBNA:Primary"
 
     result = apply_credit_card_import(
