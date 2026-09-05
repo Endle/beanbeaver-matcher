@@ -54,6 +54,59 @@ def test_extension_report_lists_approved_receipt(tmp_path):
     assert str(stage_path).encode() in response.data
 
 
+def test_duplicate_warning_and_recoverable_deletion(tmp_path):
+    from beanbeaver_matcher.receipts import list_approved_receipts, receipt_sha256
+
+    stage_path = _write_receipt(tmp_path)
+    ledger_path = _write_ledger(tmp_path, tmp_path / "receipts")
+    enriched = tmp_path / "_enriched" / "earlier.beancount"
+    enriched.parent.mkdir()
+    enriched.write_text(ledger_path.read_text())
+    ledger_path.write_text('option "title" "Test"\ninclude "_enriched/earlier.beancount"\n')
+    ledger_before = ledger_path.read_bytes(), enriched.read_bytes()
+    receipt_before = stage_path.read_bytes()
+    client = create_app([ledger_path]).test_client()
+    report = client.get("/test/extension/MatcherExtension/")
+    assert b"Possible duplicate" in report.data
+    assert b"Delete duplicate receipt" in report.data
+    assert str(enriched).encode() in report.data
+
+    endpoint = "/test/extension/MatcherExtension/delete-duplicate"
+    payload = {"stage_path": str(stage_path), "source_sha256": "stale"}
+    assert client.post(endpoint, json=payload).status_code == 409
+    assert stage_path.exists()
+    outside = tmp_path / "outside.json"
+    outside.write_bytes(receipt_before)
+    assert client.post(endpoint, json={"stage_path": str(outside)}).status_code == 409
+    assert outside.exists()
+
+    payload["source_sha256"] = receipt_sha256(stage_path)
+    response = client.post(endpoint, json=payload)
+    assert response.status_code == 200
+    assert response.get_json()["status"] == "deleted"
+    assert not stage_path.exists()
+    archived = list((tmp_path / "receipts" / ".trash").glob("*/stages/010_review.receipt.json"))
+    assert len(archived) == 1
+    assert archived[0].read_bytes() == receipt_before
+    assert list_approved_receipts(tmp_path / "receipts") == []
+    assert (ledger_path.read_bytes(), enriched.read_bytes()) == ledger_before
+    assert client.post(endpoint, json=payload).status_code == 409
+
+
+def test_delete_duplicate_rejects_unmatched_receipt(tmp_path):
+    from beanbeaver_matcher.receipts import receipt_sha256
+
+    stage_path = _write_receipt(tmp_path)
+    ledger_path = _write_ledger(tmp_path, tmp_path / "receipts")
+    client = create_app([ledger_path]).test_client()
+    response = client.post(
+        "/test/extension/MatcherExtension/delete-duplicate",
+        json={"stage_path": str(stage_path), "source_sha256": receipt_sha256(stage_path)},
+    )
+    assert response.status_code == 409
+    assert stage_path.exists()
+
+
 def test_extension_candidates_endpoint_returns_ranked_match(tmp_path):
     stage_path = _write_receipt(tmp_path)
     ledger_path = _write_ledger(tmp_path, tmp_path / "receipts")

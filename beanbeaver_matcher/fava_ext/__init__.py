@@ -8,6 +8,7 @@ from datetime import date
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import cast
+from uuid import uuid4
 
 from fava.ext import FavaExtensionBase, extension_endpoint
 from fava.helpers import FavaAPIError
@@ -33,9 +34,10 @@ from beanbeaver_matcher.receipts import (
     load_stage_document,
     read_receipt,
     receipt_sha256,
+    receipt_chain_dir,
     update_legacy_receipt,
 )
-from beanbeaver_matcher.scoring import resolve_candidates
+from beanbeaver_matcher.scoring import find_duplicate_candidates, resolve_candidates
 
 
 class MatcherExtension(FavaExtensionBase):
@@ -115,6 +117,7 @@ class MatcherExtension(FavaExtensionBase):
         approved_receipts = list_approved_receipts(config.receipts_dir)
         if config.legacy_receipts_dir is not None:
             approved_receipts.extend(list_approved_receipts(config.legacy_receipts_dir))
+        snapshot = load_transactions(self._ledger_path())
         return [
             {
                 "stage_path": str(approved.stage_path),
@@ -123,9 +126,60 @@ class MatcherExtension(FavaExtensionBase):
                 "date_is_placeholder": approved.receipt.date_is_placeholder,
                 "total": str(approved.receipt.total),
                 "editable": is_legacy_receipt_path(approved.stage_path),
+                "source_sha256": receipt_sha256(approved.stage_path),
+                "duplicates": [
+                    {"file_path": candidate.transaction.file_path, "details": candidate.details}
+                    for candidate in find_duplicate_candidates(
+                        approved.receipt, snapshot.transactions, config.merchant_families
+                    )
+                ],
             }
             for approved in approved_receipts
         ]
+
+    @extension_endpoint("delete-duplicate", methods=["POST"])  # type: ignore[arg-type]
+    def delete_duplicate_endpoint(self):  # noqa: ANN201 - Flask response
+        payload = request.get_json(force=True, silent=True)
+        if not isinstance(payload, dict):
+            return jsonify({"error": "Receipt deletion must be an object"}), 400
+        try:
+            config = self._matcher_config()
+            path = Path(str(payload.get("stage_path") or "")).resolve()
+            root = next(
+                (
+                    root.resolve()
+                    for root in (config.receipts_dir, config.legacy_receipts_dir)
+                    if root is not None
+                    and any(entry.stage_path.resolve() == path for entry in list_approved_receipts(root))
+                ),
+                None,
+            )
+            chain = receipt_chain_dir(path)
+            if root is None or chain.parent != root:
+                raise ReceiptEditError("Only pending receipts inside the configured receipt folders can be deleted")
+            if receipt_sha256(path) != payload.get("source_sha256"):
+                raise ReceiptEditError("Receipt changed; refresh the page before deleting")
+            snapshot = load_transactions(self._ledger_path())
+            if snapshot.errors:
+                raise ReceiptEditError("Resolve ledger errors before deleting a duplicate receipt")
+            if not find_duplicate_candidates(read_receipt(path), snapshot.transactions, config.merchant_families):
+                raise ReceiptEditError("This receipt no longer has a possible duplicate; refresh the page")
+            if any(Path(txn.file_path).resolve().is_relative_to(chain) for txn in snapshot.transactions):
+                raise ReceiptEditError("This receipt folder contains active ledger entries and cannot be deleted")
+            trash = root / ".trash"
+            if trash.is_symlink():
+                raise ReceiptEditError("Receipt trash must not be a symbolic link")
+            trash.mkdir(exist_ok=True)
+            destination = trash / f"{chain.name}-{uuid4().hex}"
+            chain.rename(destination)
+            return jsonify(
+                {
+                    "status": "deleted",
+                    "message": f"Duplicate receipt moved to {destination}. Restore this folder to {root} to recover it.",
+                }
+            )
+        except (ReceiptEditError, OSError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
 
     @extension_endpoint("receipt", methods=["GET"])  # type: ignore[arg-type]
     def receipt_endpoint(self):  # noqa: ANN201 - Flask response

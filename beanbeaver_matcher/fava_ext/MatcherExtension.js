@@ -220,6 +220,37 @@ export default {
       });
     });
 
+    table.querySelectorAll(".bb-matcher-delete-duplicate").forEach((element) => {
+      const button = /** @type {HTMLButtonElement} */ (element);
+      button.addEventListener("click", async () => {
+        const row = button.closest("tr");
+        if (!row || !window.confirm("Delete this pending receipt and its files? They will be moved to receipt trash and can be restored. The matched ledger entry will stay unchanged.")) {
+          return;
+        }
+        button.disabled = true;
+        try {
+          const result = await api.post("delete-duplicate", {
+            stage_path: row.dataset.stagePath,
+            source_sha256: row.dataset.sourceSha256,
+          });
+          if (result.error) {
+            showError(result.error);
+            return;
+          }
+          row.remove();
+          editor.hidden = true;
+          candidatesSection.hidden = true;
+          editData = null;
+          editRow = null;
+          statusLabel.textContent = result.message;
+        } catch (error) {
+          showError(error);
+        } finally {
+          button.disabled = false;
+        }
+      });
+    });
+
     addItemButton.addEventListener("click", () => {
       appendItemRow({ description: "", price: "", quantity: 1, category: "" }).focus();
     });

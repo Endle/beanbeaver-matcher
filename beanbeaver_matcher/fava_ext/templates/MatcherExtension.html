@@ -6,13 +6,20 @@
     </thead>
     <tbody>
       {% for receipt in extension.receipts() %}
-      <tr data-stage-path="{{ receipt.stage_path }}">
+      <tr data-stage-path="{{ receipt.stage_path }}" data-source-sha256="{{ receipt.source_sha256 }}">
         <td>{{ "UNKNOWN" if receipt.date_is_placeholder else receipt.date }}</td>
         <td>{{ receipt.merchant }}</td>
         <td>${{ receipt.total }}</td>
         <td>
           <button class="bb-matcher-select" type="button">Find matches</button>
           {% if receipt.editable %}<button class="bb-matcher-edit" type="button">Edit receipt</button>{% endif %}
+          {% if receipt.duplicates %}
+          <p>Possible duplicate — a matching purchase is already itemized.</p>
+          {% for duplicate in receipt.duplicates %}
+          <p><code>{{ duplicate.file_path }}</code><br>{{ duplicate.details }}</p>
+          {% endfor %}
+          <button class="bb-matcher-delete-duplicate" type="button">Delete duplicate receipt</button>
+          {% endif %}
         </td>
       </tr>
       {% else %}

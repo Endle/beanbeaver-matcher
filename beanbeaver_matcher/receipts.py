@@ -479,7 +479,7 @@ def list_approved_receipts(receipts_root: Path) -> list[ApprovedReceipt]:
     if not receipts_root.is_dir():
         return results
     for chain_dir in sorted(receipts_root.iterdir()):
-        if not chain_dir.is_dir():
+        if chain_dir.name == ".trash" or not chain_dir.is_dir():
             continue
         stage_path = latest_stage_file(chain_dir)
         if stage_path is not None:

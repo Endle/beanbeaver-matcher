@@ -345,6 +345,18 @@ class ResolvedCandidates:
     warning: str | None
 
 
+def find_duplicate_candidates(
+    receipt: Receipt,
+    transactions: Sequence[LedgerTransaction],
+    merchant_families: Sequence[MerchantFamily] = (),
+) -> list[Candidate]:
+    """Possible duplicates: same dated merchant purchase already enriched in the ledger."""
+    if receipt.date_is_placeholder:
+        return []
+    enriched = [txn for txn in transactions if txn.is_enriched and txn.date == receipt.date]
+    return match_receipt_to_transactions(receipt, enriched, relaxed_config(), merchant_families, "relaxed")
+
+
 def resolve_candidates(
     receipt: Receipt,
     transactions: Sequence[LedgerTransaction],
