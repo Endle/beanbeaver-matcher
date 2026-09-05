@@ -45,6 +45,7 @@ class ImportConfig:
     imports_dir: Path
     records_dir: Path
     merchant_rules: Path | None = None
+    chequing_rules: Path | None = None
 
 
 def resolve_config(options: dict[str, object]) -> MatcherConfig:
@@ -76,9 +77,12 @@ def resolve_import_config(options: dict[str, object], *, fava_ledger_path: Path)
 
     rules_value = options.get("merchant_rules")
     merchant_rules = Path(str(rules_value)).expanduser() if rules_value else None
+    chequing_rules_value = options.get("chequing_rules")
+    chequing_rules = Path(str(chequing_rules_value)).expanduser() if chequing_rules_value else None
     return ImportConfig(
         ledger_path=ledger_path,
         imports_dir=imports_dir.resolve(),
         records_dir=records_dir.resolve(),
         merchant_rules=merchant_rules.resolve() if merchant_rules else None,
+        chequing_rules=chequing_rules.resolve() if chequing_rules else None,
     )

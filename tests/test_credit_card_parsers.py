@@ -83,3 +83,21 @@ def test_ambiguous_transactions_filename_requires_a_known_header(tmp_path):
 
     with pytest.raises(CardParseError, match="does not match"):
         route_credit_card(path)
+
+
+@pytest.mark.parametrize("date_column", ["effective_date", "transaction_date"])
+def test_routes_and_parses_wealthsimple_chequing_exports(tmp_path, date_column):
+    path = tmp_path / "activities-export-2026-09-04.csv"
+    path.write_text(
+        f"{date_column},effective_time,account_type,activity_type,description,currency,net_cash_amount\n"
+        "2026-08-31,04:00:00,Chequing,MoneyMovement,Online bill payment (executed at 2026-08-31),CAD,-1266.08\n"
+        "2026-09-03,17:00:15,Chequing,MoneyMovement,Direct deposit received,CAD,2524.06\n"
+        "2026-09-03,17:00:15,Cash,MoneyMovement,Ignored investment activity,CAD,100.00\n"
+    )
+
+    assert route_credit_card(path) == "wealthsimple_chequing"
+    rows = parse_credit_card(path, "wealthsimple_chequing")
+    assert [(row.payee, row.amount) for row in rows] == [
+        ("Online bill payment", Decimal("1266.08")),
+        ("Direct deposit received", Decimal("-2524.06")),
+    ]

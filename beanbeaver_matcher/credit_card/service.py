@@ -21,7 +21,7 @@ from beanbeaver_matcher.credit_card.model import (
     TransactionEdit,
 )
 from beanbeaver_matcher.credit_card.parsers import parse_credit_card, route_credit_card
-from beanbeaver_matcher.credit_card.rules import MerchantRules
+from beanbeaver_matcher.credit_card.rules import ChequingRules, MerchantRules
 
 _ISSUER_ALIASES: dict[CardImporterId, tuple[str, ...]] = {
     "cibc": ("CIBC",),
@@ -32,6 +32,7 @@ _ISSUER_ALIASES: dict[CardImporterId, tuple[str, ...]] = {
     "pcf": ("PCFINANCIAL", "PC"),
     "ctfs": ("CTFS",),
     "amex": ("AMEX", "AMERICANEXPRESS"),
+    "wealthsimple_chequing": ("WEALTHSIMPLE",),
 }
 
 
@@ -82,7 +83,8 @@ def _open_accounts(ledger_path: Path, *, as_of: date, pattern: str) -> list[str]
 
 
 def _account_options(ledger_path: Path, importer_id: CardImporterId, source_path: Path, as_of: date) -> tuple[str, ...]:
-    accounts = _open_accounts(ledger_path, as_of=as_of, pattern="Liabilities:CreditCard:*")
+    pattern = "Assets:Bank:Chequing:*" if importer_id == "wealthsimple_chequing" else "Liabilities:CreditCard:*"
+    accounts = _open_accounts(ledger_path, as_of=as_of, pattern=pattern)
     aliases = _ISSUER_ALIASES[importer_id]
     matching = [account for account in accounts if any(alias in _normalize(account) for alias in aliases)]
 
@@ -108,6 +110,17 @@ def _account_options(ledger_path: Path, importer_id: CardImporterId, source_path
         if preferred:
             matching = preferred
     return tuple(matching)
+
+
+def _counter_account_options(ledger_path: Path, *, as_of: date, source_account: str) -> list[str]:
+    prefixes = ("Assets:*", "Liabilities:*", "Equity:*", "Expenses:*", "Income:*")
+    accounts = {
+        account
+        for pattern in prefixes
+        for account in _open_accounts(ledger_path, as_of=as_of, pattern=pattern)
+        if account != source_account
+    }
+    return sorted(accounts)
 
 
 def _existing_fingerprints(ledger_path: Path, account: str) -> set[tuple[date, str, Decimal]]:
@@ -143,30 +156,36 @@ def plan_credit_card_import(
     selected_account: str | None = None,
     importer_id: CardImporterId | None = None,
     merchant_rules_path: Path | None = None,
+    chequing_rules_path: Path | None = None,
 ) -> CreditCardPlan:
     source_path = source_path.resolve()
     routed_importer = route_credit_card(source_path)
     if importer_id is not None and importer_id != routed_importer:
-        raise ImportApplyError(
-            f"Statement now routes to {routed_importer}, not the reviewed {importer_id} importer"
-        )
+        raise ImportApplyError(f"Statement now routes to {routed_importer}, not the reviewed {importer_id} importer")
     resolved_importer = importer_id or routed_importer
     rows = parse_credit_card(source_path, resolved_importer)
     as_of = max(row.date for row in rows)
     account_options = _account_options(ledger_path, resolved_importer, source_path, as_of)
     if not account_options:
-        raise ImportApplyError(f"No open {resolved_importer} credit-card accounts found as of {as_of.isoformat()}")
+        account_kind = "Wealthsimple chequing" if resolved_importer == "wealthsimple_chequing" else resolved_importer
+        raise ImportApplyError(f"No open {account_kind} accounts found as of {as_of.isoformat()}")
     if selected_account is None and len(account_options) != 1:
-        raise AccountSelectionRequired(account_options, resolved_importer.upper())
+        label = "Wealthsimple chequing" if resolved_importer == "wealthsimple_chequing" else resolved_importer.upper()
+        raise AccountSelectionRequired(account_options, label)
     account = selected_account or account_options[0]
     if account not in account_options:
         raise ImportApplyError(f"Selected account is not available for this statement: {account}")
 
-    rules = MerchantRules(merchant_rules_path)
     existing = _existing_fingerprints(ledger_path, account)
-    categories = _open_accounts(ledger_path, as_of=as_of, pattern="Expenses:*")
+    rules: ChequingRules | MerchantRules
+    if resolved_importer == "wealthsimple_chequing":
+        rules = ChequingRules(chequing_rules_path)
+        categories = _counter_account_options(ledger_path, as_of=as_of, source_account=account)
+    else:
+        rules = MerchantRules(merchant_rules_path)
+        categories = _open_accounts(ledger_path, as_of=as_of, pattern="Expenses:*")
     if not categories:
-        raise ImportApplyError(f"No open expense accounts found as of {as_of.isoformat()}")
+        raise ImportApplyError(f"No open counter-accounts found as of {as_of.isoformat()}")
     fallback_category = "Expenses:Uncategorized" if "Expenses:Uncategorized" in categories else categories[0]
 
     def category_for(payee: str, amount: Decimal) -> str:
@@ -227,8 +246,8 @@ def _edited_transactions(
         if not amount.is_finite():
             raise ImportApplyError(f"Invalid amount for row {transaction.row_id}: {amount}")
         category = edit.category if edit else transaction.category
-        if not category.startswith("Expenses:"):
-            raise ImportApplyError(f"Invalid expense category for row {transaction.row_id}: {category}")
+        if category not in plan.candidate_categories:
+            raise ImportApplyError(f"Invalid or closed counter-account for row {transaction.row_id}: {category}")
         rendered.append((transaction, amount, category))
     if not rendered:
         raise ImportApplyError("No transactions remain to import")
@@ -239,7 +258,7 @@ def render_credit_card_plan(plan: CreditCardPlan, edits: tuple[TransactionEdit, 
     transactions = _edited_transactions(plan, edits)
     lines = [
         ";; -*- mode: beancount -*-",
-        f";; Credit-card import from {plan.source_path.name}",
+        f";; Statement import from {plan.source_path.name}",
         f";; importer: {plan.importer_id}",
         f";; source-sha256: {plan.source_sha256}",
         "",
@@ -260,6 +279,8 @@ def render_credit_card_plan(plan: CreditCardPlan, edits: tuple[TransactionEdit, 
 
 
 def _result_filename(plan: CreditCardPlan) -> str:
+    if plan.importer_id == "wealthsimple_chequing":
+        return f"wealthsimple_chequing_{plan.start_date:%m%d}_{plan.end_date:%m%d}.beancount"
     account_name = plan.account.removeprefix("Liabilities:CreditCard:").replace(":", "_").lower()
     return f"{account_name}_{plan.start_date:%m%d}_{plan.end_date:%m%d}.beancount"
 
@@ -293,6 +314,7 @@ def apply_credit_card_import(
     edits: tuple[TransactionEdit, ...],
     importer_id: CardImporterId | None = None,
     merchant_rules_path: Path | None = None,
+    chequing_rules_path: Path | None = None,
 ) -> ApplyImportResult:
     if _sha256(source_path) != expected_source_sha256:
         raise ImportApplyError("Statement changed after review; refresh the import plan")
@@ -302,6 +324,7 @@ def apply_credit_card_import(
         selected_account=selected_account,
         importer_id=importer_id,
         merchant_rules_path=merchant_rules_path,
+        chequing_rules_path=chequing_rules_path,
     )
     if plan.source_sha256 in _imported_source_hashes(ledger_path):
         year_dir = records_dir / str(plan.end_date.year)

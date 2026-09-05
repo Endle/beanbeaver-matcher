@@ -75,3 +75,30 @@ def test_imports_extension_rejects_paths_outside_import_directory(tmp_path):
     )
     assert response.status_code == 400
     assert "inside the configured imports directory" in response.get_json()["error"]
+
+
+def test_imports_extension_lists_new_wealthsimple_chequing_export(tmp_path):
+    ledger_path, _ = _setup_import_extension(tmp_path)
+    imports_dir = tmp_path / "imports"
+    (imports_dir / "activities-export-2026-09-04.csv").write_text(
+        "effective_date,account_type,activity_type,description,currency,net_cash_amount\n"
+        "2026-09-03,Chequing,MoneyMovement,Direct deposit received,CAD,2524.06\n"
+    )
+    with ledger_path.open("a") as handle:
+        handle.write("2020-01-01 open Assets:Bank:Chequing:Wealthsimple CAD\n2020-01-01 open Income:Salary CAD\n")
+
+    client = create_app([ledger_path]).test_client()
+    report = client.get("/test/extension/ImportsExtension/")
+
+    assert report.status_code == 200
+    assert b"activities-export-2026-09-04.csv" in report.data
+    assert b"WEALTHSIMPLE CHEQUING" in report.data
+
+    plan_response = client.get(
+        "/test/extension/ImportsExtension/plan",
+        query_string={"source_id": "activities-export-2026-09-04.csv"},
+    )
+    assert plan_response.status_code == 200
+    plan = plan_response.get_json()
+    assert plan["account"] == "Assets:Bank:Chequing:Wealthsimple"
+    assert plan["transactions"][0]["amount"] == "-2524.06"

@@ -8,7 +8,17 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Literal
 
-CardImporterId = Literal["cibc", "bmo", "scotia", "rogers", "mbna", "pcf", "ctfs", "amex"]
+CardImporterId = Literal[
+    "cibc",
+    "bmo",
+    "scotia",
+    "rogers",
+    "mbna",
+    "pcf",
+    "ctfs",
+    "amex",
+    "wealthsimple_chequing",
+]
 
 
 @dataclass(frozen=True)

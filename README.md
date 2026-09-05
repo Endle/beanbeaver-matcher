@@ -2,7 +2,7 @@
 
 Match scanned receipts (staged JSON produced by [beanbeaver](https://github.com/Endle/beanbeaver))
 against transactions in a [Beancount](https://beancount.github.io) ledger, and review and import
-credit-card statements, all from [Fava](https://github.com/beancount/fava) extensions.
+credit-card and Wealthsimple chequing statements, all from [Fava](https://github.com/beancount/fava) extensions.
 
 Pure Python, no Rust. GPL-2.0 (links `beancount`).
 
@@ -18,11 +18,13 @@ include wrapper around your ledger. Ledger files are modified only by an Apply a
 matching writes an enriched itemized entry and archives the matched receipt, while statement
 import writes a validated transaction file and updates its yearly summary.
 
-## Credit-card imports
+## Statement imports
 
 Open the **Imports** report in Fava to review supported statement CSV files. The first version
 supports the retiring beanbeaver importer's CIBC/Simplii, BMO, Scotiabank, Rogers, MBNA,
-PC Financial, Canadian Tire Financial, and AMEX formats.
+PC Financial, Canadian Tire Financial, and AMEX formats. It also supports Wealthsimple
+`activities-export-YYYY-MM-DD.csv` chequing exports using either the `transaction_date` or newer
+`effective_date` column.
 
 The review screen resolves the open card account from the ledger, asks when multiple cards
 match, suggests an open expense account, marks exact ledger duplicates, and lets each row be
@@ -56,8 +58,10 @@ Extension options (in the ledger's `custom "fava-extension"` directive):
   Fava itself is launched against a temporary wrapper.
 - `imports` (optional): directory containing statement CSVs; defaults to `~/Downloads`.
 - `records` (optional): output records root; defaults to `records/` beside the main ledger.
-- `merchant_rules` (optional): project TOML rules loaded before the bundled categorization
+- `merchant_rules` (optional): project TOML rules loaded before the bundled credit-card categorization
   defaults. Each `[[rules]]` entry has `keywords = [...]` and `category = "Expenses:..."`.
+- `chequing_rules` (optional): project TOML rules for chequing counter-accounts. Each `[[rules]]`
+  entry has `pattern = "..."` and `account = "Income:..."` (or any other open ledger account).
 
 ## Known v1 limitations
 
