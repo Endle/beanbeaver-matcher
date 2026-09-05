@@ -123,7 +123,9 @@ def _counter_account_options(ledger_path: Path, *, as_of: date, source_account: 
     return sorted(accounts)
 
 
-def _existing_fingerprints(ledger_path: Path, account: str) -> set[tuple[date, str, Decimal]]:
+def _existing_fingerprints(
+    ledger_path: Path, account: str, *, source_account_amounts: bool = False
+) -> set[tuple[date, str, Decimal]]:
     entries, errors, _ = _load_ledger(ledger_path)
     if errors:
         raise ImportApplyError(f"Ledger has errors: {errors[0]}")
@@ -133,7 +135,8 @@ def _existing_fingerprints(ledger_path: Path, account: str) -> set[tuple[date, s
             continue
         for posting in entry.postings:
             if posting.account == account and posting.units is not None:
-                fingerprints.add((entry.date, entry.payee or "", -posting.units.number))
+                amount = posting.units.number if source_account_amounts else -posting.units.number
+                fingerprints.add((entry.date, entry.payee or "", amount))
                 break
     return fingerprints
 
@@ -176,7 +179,8 @@ def plan_credit_card_import(
     if account not in account_options:
         raise ImportApplyError(f"Selected account is not available for this statement: {account}")
 
-    existing = _existing_fingerprints(ledger_path, account)
+    is_chequing = resolved_importer == "wealthsimple_chequing"
+    existing = _existing_fingerprints(ledger_path, account, source_account_amounts=is_chequing)
     rules: ChequingRules | MerchantRules
     if resolved_importer == "wealthsimple_chequing":
         rules = ChequingRules(chequing_rules_path)
@@ -264,14 +268,16 @@ def render_credit_card_plan(plan: CreditCardPlan, edits: tuple[TransactionEdit, 
         "",
     ]
     for transaction, amount, category in transactions:
+        source_amount = amount if plan.importer_id == "wealthsimple_chequing" else -amount
+        counter_amount = -amount if plan.importer_id == "wealthsimple_chequing" else amount
         lines.extend(
             [
                 f'{transaction.date.isoformat()} * "{_quote(transaction.payee)}" ""',
                 f'  bb_source: "{plan.source_sha256}"',
                 f'  bb_importer: "{plan.importer_id}"',
                 f'  bb_row: "{transaction.row_id}"',
-                f"  {plan.account}  {_amount(-amount)} {transaction.currency}",
-                f"  {category}  {_amount(amount)} {transaction.currency}",
+                f"  {plan.account}  {_amount(source_amount)} {transaction.currency}",
+                f"  {category}  {_amount(counter_amount)} {transaction.currency}",
                 "",
             ]
         )

@@ -101,4 +101,4 @@ def test_imports_extension_lists_new_wealthsimple_chequing_export(tmp_path):
     assert plan_response.status_code == 200
     plan = plan_response.get_json()
     assert plan["account"] == "Assets:Bank:Chequing:Wealthsimple"
-    assert plan["transactions"][0]["amount"] == "-2524.06"
+    assert plan["transactions"][0]["amount"] == "2524.06"

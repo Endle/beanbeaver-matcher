@@ -98,6 +98,6 @@ def test_routes_and_parses_wealthsimple_chequing_exports(tmp_path, date_column):
     assert route_credit_card(path) == "wealthsimple_chequing"
     rows = parse_credit_card(path, "wealthsimple_chequing")
     assert [(row.payee, row.amount) for row in rows] == [
-        ("Online bill payment", Decimal("1266.08")),
-        ("Direct deposit received", Decimal("-2524.06")),
+        ("Online bill payment", Decimal("-1266.08")),
+        ("Direct deposit received", Decimal("2524.06")),
     ]
