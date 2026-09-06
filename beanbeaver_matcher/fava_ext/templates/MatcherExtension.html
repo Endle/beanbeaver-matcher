@@ -1,15 +1,99 @@
+{# Fava serves no static files for extensions (only the report template and the JS
+   module), so the report's styles have to travel with the template. Everything is
+   scoped under #bb-matcher: the extension body is injected into the same <article>
+   Fava uses for its own reports, and an unscoped element rule would leak into them.
+   Colours come from Fava's custom properties so the report follows its light/dark
+   theme; Fava itself supplies only base element styles, no layout. #}
+<style>
+  /* Guard the hidden panels: never give these ids a display rule. */
+  #bb-matcher [hidden] { display: none !important; }
+
+  #bb-matcher-editor {
+    max-width: 72em;
+    padding: 1rem 1.25rem;
+    margin: 0 0 1rem;
+    background: var(--background-darker);
+    border: 1px solid var(--border);
+  }
+  #bb-matcher-editor h4 { margin: 1.5rem 0 0.5rem; }
+
+  /* Receipt header fields: identity on the left, the money group on the right,
+     each label stacked over its input instead of an inline run of five. */
+  #bb-matcher-fields {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 2rem;
+    align-items: flex-end;
+    margin: 0 0 1rem;
+  }
+  #bb-matcher-fields .bb-matcher-field-group {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 0.75rem;
+  }
+  #bb-matcher-fields label {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 0.85em;
+    color: var(--text-color-lightest);
+  }
+  #bb-matcher-fields input { font-size: 1rem; color: var(--text-color); }
+  #bb-matcher-edit-merchant { width: 18em; }
+  #bb-matcher-edit-date { width: 10em; }
+  #bb-matcher-edit-subtotal,
+  #bb-matcher-edit-tax,
+  #bb-matcher-edit-total { width: 7em; }
+
+  /* Item and tender rows. Inputs default to ~20 characters whatever they hold, which
+     truncates the description and the account — the two fields being edited — while
+     giving the same width to a two-digit quantity. Size the columns instead and let
+     each input fill its cell. */
+  #bb-matcher-items-table,
+  #bb-matcher-tenders-table { width: 100%; table-layout: fixed; }
+  #bb-matcher-items-table input,
+  #bb-matcher-tenders-table input,
+  #bb-matcher-tenders-table select { width: 100%; box-sizing: border-box; }
+
+  #bb-matcher-items-table th:nth-child(2),
+  #bb-matcher-items-table th:nth-child(3) { width: 7em; }
+  #bb-matcher-items-table th:nth-child(4) { width: 24em; }
+  #bb-matcher-items-table th:nth-child(5) { width: 9em; }
+
+  #bb-matcher-tenders-table th:nth-child(1) { width: 9em; }
+  #bb-matcher-tenders-table th:nth-child(2) { width: 8em; }
+  #bb-matcher-tenders-table th:nth-child(3) { width: 24em; }
+  #bb-matcher-tenders-table th:nth-child(5) { width: 10em; }
+
+  /* Amounts read as a column: right-aligned and monospaced, like Fava's own .num.
+     Accounts are structured identifiers, so they get the monospaced face too. */
+  #bb-matcher .bb-matcher-item-price,
+  #bb-matcher .bb-matcher-item-quantity,
+  #bb-matcher .bb-matcher-tender-amount,
+  #bb-matcher-edit-subtotal,
+  #bb-matcher-edit-tax,
+  #bb-matcher-edit-total {
+    font-family: var(--font-family-monospaced);
+    text-align: right;
+  }
+  #bb-matcher .bb-matcher-item-category,
+  #bb-matcher .bb-matcher-tender-account {
+    font-family: var(--font-family-monospaced);
+  }
+</style>
+
 <div id="bb-matcher">
   <h3>Receipts awaiting review or a match</h3>
   <table id="bb-matcher-receipts">
     <thead>
-      <tr><th>Date</th><th>Merchant</th><th>Total</th><th></th></tr>
+      <tr><th>Date</th><th>Merchant</th><th class="num">Total</th><th></th></tr>
     </thead>
     <tbody>
       {% for receipt in extension.receipts() %}
       <tr data-stage-path="{{ receipt.stage_path }}" data-source-sha256="{{ receipt.source_sha256 }}">
         <td>{{ "UNKNOWN" if receipt.date_is_placeholder else receipt.date }}</td>
         <td>{{ receipt.merchant }}</td>
-        <td>${{ receipt.total }}</td>
+        <td class="num">${{ receipt.total }}</td>
         <td>
           <button class="bb-matcher-select" type="button" {% if receipt.needs_review %}hidden{% endif %}>Find matches</button>
           {% if receipt.needs_review %}<span>Needs review</span>{% endif %}
@@ -19,7 +103,7 @@
           {% for duplicate in receipt.duplicates %}
           <p><code>{{ duplicate.file_path }}</code><br>{{ duplicate.details }}</p>
           {% endfor %}
-          <button class="bb-matcher-delete-duplicate" type="button">Delete duplicate receipt</button>
+          <button class="bb-matcher-delete-duplicate muted" type="button">Delete duplicate receipt</button>
           {% endif %}
         </td>
       </tr>
@@ -32,36 +116,40 @@
   <section id="bb-matcher-editor" hidden>
     <h3>Review receipt</h3>
     <p><code id="bb-matcher-editor-path"></code></p>
-    <p>
-      <label>Merchant <input id="bb-matcher-edit-merchant" type="text"></label>
-      <label>Date <input id="bb-matcher-edit-date" type="date"></label>
-      <label>Subtotal <input id="bb-matcher-edit-subtotal" type="number" step="0.01"></label>
-      <label>Tax <input id="bb-matcher-edit-tax" type="number" step="0.01"></label>
-      <label>Total <input id="bb-matcher-edit-total" type="number" step="0.01" required></label>
-    </p>
+    <div id="bb-matcher-fields">
+      <div class="bb-matcher-field-group">
+        <label>Merchant <input id="bb-matcher-edit-merchant" type="text"></label>
+        <label>Date <input id="bb-matcher-edit-date" type="date"></label>
+      </div>
+      <div class="bb-matcher-field-group">
+        <label>Subtotal <input id="bb-matcher-edit-subtotal" type="number" step="0.01"></label>
+        <label>Tax <input id="bb-matcher-edit-tax" type="number" step="0.01"></label>
+        <label>Total <input id="bb-matcher-edit-total" type="number" step="0.01" required></label>
+      </div>
+    </div>
 
     <details><summary>OCR text and warnings</summary>
       <pre id="bb-matcher-edit-raw-text"></pre>
       <ul id="bb-matcher-edit-warnings"></ul>
     </details>
     <h4>Items</h4>
-    <table>
+    <table id="bb-matcher-items-table">
       <thead><tr><th>Description</th><th>Price</th><th>Quantity</th><th>Account</th><th>Actions</th></tr></thead>
       <tbody id="bb-matcher-edit-items"></tbody>
     </table>
-    <p><button id="bb-matcher-add-item" type="button">Add item</button></p>
+    <p><button id="bb-matcher-add-item" class="muted" type="button">Add item</button></p>
 
     <h4>Payment tenders</h4>
     <p>For split payments, tender amounts must add up to the receipt total. The card tender is matched to the statement charge.</p>
-    <table>
+    <table id="bb-matcher-tenders-table">
       <thead><tr><th>Kind</th><th>Amount</th><th>Account</th><th>Label</th><th>Actions</th></tr></thead>
       <tbody id="bb-matcher-edit-tenders"></tbody>
     </table>
-    <p><button id="bb-matcher-add-tender" type="button">Add tender</button></p>
+    <p><button id="bb-matcher-add-tender" class="muted" type="button">Add tender</button></p>
     <datalist id="bb-matcher-accounts"></datalist>
     <p>
       <button id="bb-matcher-save-receipt" type="button">Save review</button>
-      <button id="bb-matcher-cancel-edit" type="button">Cancel</button>
+      <button id="bb-matcher-cancel-edit" class="muted" type="button">Cancel</button>
     </p>
   </section>
 
