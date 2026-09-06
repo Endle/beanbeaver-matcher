@@ -59,6 +59,7 @@ export default {
       const cell = document.createElement("td");
       const button = document.createElement("button");
       button.type = "button";
+      button.className = "muted";
       button.textContent = label;
       button.addEventListener("click", () => row.remove());
       cell.appendChild(button);
@@ -138,6 +139,7 @@ export default {
       }
       candidatesSection.hidden = true;
       editor.hidden = false;
+      editor.scrollIntoView({ behavior: "smooth", block: "start" });
       statusLabel.textContent = "Edit the receipt and save to recalculate matches.";
     };
 
@@ -145,6 +147,7 @@ export default {
       currentReceiptLabel.textContent = stagePath;
       candidatesBody.innerHTML = "<tr><td colspan=\"6\">Loading…</td></tr>";
       candidatesSection.hidden = false;
+      candidatesSection.scrollIntoView({ behavior: "smooth", block: "start" });
       editor.hidden = true;
       warningLabel.textContent = "";
       statusLabel.textContent = "";
