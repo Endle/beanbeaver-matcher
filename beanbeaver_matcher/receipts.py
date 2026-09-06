@@ -9,16 +9,18 @@ rules in v1 (that needs beanbeaver's project-local rule config); itemized postin
 
 from __future__ import annotations
 
+import copy
 import json
 import hashlib
 import os
 import re
 import tempfile
 from dataclasses import dataclass
-from datetime import date
+from datetime import UTC, date, datetime
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any, cast
+from uuid import uuid4
 
 from beanbeaver_matcher.model import Receipt, ReceiptItem, ReceiptWarning, Tender, TenderKind
 
@@ -112,7 +114,7 @@ def _parse_items(raw_items: list[Any]) -> list[ReceiptItem]:
                 quantity=quantity,
                 # Rule-based category resolution is deferred (see module docstring);
                 # enrich.py falls back to Expenses:FIXME for uncategorized items.
-                category=None,
+                category=_effective_entry(raw, "account") or None,
             )
         )
     return items
@@ -293,6 +295,8 @@ def receipt_sha256(path: Path) -> str:
 def _edit_decimal(value: object, label: str, *, required: bool = False) -> Decimal | None:
     parsed = _to_decimal(value)
     if parsed is None:
+        if value is not None and str(value).strip():
+            raise ReceiptEditError(f"{label} must be a number")
         if required:
             raise ReceiptEditError(f"{label} is required")
         return None
@@ -301,20 +305,9 @@ def _edit_decimal(value: object, label: str, *, required: bool = False) -> Decim
     return parsed
 
 
-def update_legacy_receipt(
-    path: Path,
-    payload: dict[str, Any],
-    *,
-    expected_sha256: str,
-    allowed_accounts: set[str],
-) -> Receipt:
-    """Validate and atomically persist edits to one legacy receipt JSON."""
-    if not is_legacy_receipt_path(path):
-        raise ReceiptEditError("Only legacy flat receipts can be edited in Matcher")
-    if receipt_sha256(path) != expected_sha256:
-        raise ReceiptEditError("Receipt changed after it was opened; reload it before saving")
-    document = load_stage_document(path)
-
+def _validate_receipt_edit(
+    document: dict[str, Any], payload: dict[str, Any], allowed_accounts: set[str]
+) -> dict[str, Any]:
     merchant = str(payload.get("merchant") or "").strip()
     if not merchant:
         raise ReceiptEditError("Merchant is required")
@@ -357,6 +350,8 @@ def update_legacy_receipt(
             quantity = int(raw.get("quantity", 1))
         except (TypeError, ValueError) as exc:
             raise ReceiptEditError(f"Item {index} quantity must be a whole number") from exc
+        if str(quantity) != str(raw.get("quantity", 1)).strip():
+            raise ReceiptEditError(f"Item {index} quantity must be a whole number")
         if quantity < 1:
             raise ReceiptEditError(f"Item {index} quantity must be at least one")
         account = str(raw.get("category") or "").strip()
@@ -416,12 +411,88 @@ def update_legacy_receipt(
             "tenders": edited_tenders,
         }
     )
+    return document
+
+
+def update_legacy_receipt(
+    path: Path,
+    payload: dict[str, Any],
+    *,
+    expected_sha256: str,
+    allowed_accounts: set[str],
+) -> Receipt:
+    """Validate and atomically persist edits to one legacy receipt JSON."""
+    if not is_legacy_receipt_path(path):
+        raise ReceiptEditError("Only legacy flat receipts can be edited in Matcher")
+    if receipt_sha256(path) != expected_sha256:
+        raise ReceiptEditError("Receipt changed after it was opened; reload it before saving")
+    document = load_stage_document(path)
+
+    document = _validate_receipt_edit(document, payload, allowed_accounts)
     with tempfile.NamedTemporaryFile("w", delete=False, dir=path.parent, encoding="utf-8") as handle:
         temporary = Path(handle.name)
         json.dump(document, handle, indent=2)
         handle.write("\n")
     os.replace(temporary, path)
     return read_receipt(path)
+
+
+def update_receipt(path: Path, payload: dict[str, Any], *, expected_sha256: str, allowed_accounts: set[str]) -> Path:
+    """Save a legacy edit or append a review stage, preserving parsed source data."""
+    if is_legacy_receipt_path(path):
+        update_legacy_receipt(path, payload, expected_sha256=expected_sha256, allowed_accounts=allowed_accounts)
+        return path
+    if latest_stage_file(receipt_chain_dir(path)) != path or stage_status(load_stage_document(path)) == "matched":
+        raise ReceiptEditError("Only the latest unmatched receipt stage can be reviewed")
+    if receipt_sha256(path) != expected_sha256:
+        raise ReceiptEditError("Receipt changed after it was opened; reload it before saving")
+    document = load_stage_document(path)
+    validated = _validate_receipt_edit(copy.deepcopy(document), payload, allowed_accounts)
+    reviewed = copy.deepcopy(document)
+    review = reviewed["review"] = dict(reviewed.get("review") or {})
+    for key in ("merchant", "date", "subtotal", "tax", "total"):
+        # Empty strings explicitly clear optional fields through the review overlay.
+        review[key] = validated[key] if validated[key] is not None else ""
+    items = reviewed["items"] = reviewed.get("items") or []
+    for item in items:
+        if isinstance(item, dict):
+            item["review"] = {**(item.get("review") or {}), "removed": True}
+    for raw, edited in zip(payload["items"], validated["items"], strict=True):
+        source_index = raw.get("source_index")
+        if source_index is None:
+            item = {"id": f"item-{uuid4().hex}"}
+            items.append(item)
+        else:
+            item = items[source_index]
+        item.setdefault("review", {}).update(
+            {key: edited[key] for key in ("description", "price", "quantity", "account")}
+        )
+        item["review"]["removed"] = False
+    reviewed["tenders"] = validated["tenders"]
+    meta = reviewed.setdefault("meta", {})
+    index = stage_index(document) + 1
+    meta.update(
+        {
+            "stage": f"review_stage_{index}",
+            "stage_index": index,
+            "parent_file": path.name,
+            "created_by": "beanbeaver_matcher",
+            "created_at": datetime.now(UTC).isoformat(),
+            "pass_name": "receipt_review",
+        }
+    )
+    destination = path.parent / f"{index:03d}_review_{uuid4().hex}.receipt.json"
+    with tempfile.NamedTemporaryFile("w", delete=False, dir=path.parent, encoding="utf-8") as handle:
+        temporary = Path(handle.name)
+        json.dump(reviewed, handle, indent=2)
+        handle.write("\n")
+    try:
+        if latest_stage_file(receipt_chain_dir(path)) != path or receipt_sha256(path) != expected_sha256:
+            raise ReceiptEditError("Receipt changed after it was opened; reload it before saving")
+        os.replace(temporary, destination)
+    finally:
+        temporary.unlink(missing_ok=True)
+    return destination
 
 
 def stage_status(document: dict[str, Any]) -> str:
@@ -472,9 +543,10 @@ class ApprovedReceipt:
     receipt: Receipt
 
 
-def list_approved_receipts(receipts_root: Path) -> list[ApprovedReceipt]:
+def list_approved_receipts(receipts_root: Path, *, include_scanned: bool = False) -> list[ApprovedReceipt]:
     """The latest-stage receipt for every chain directory under `receipts_root` whose
-    latest stage is "approved" (reviewed, awaiting a ledger match)."""
+    latest stage is "approved" (reviewed, awaiting a ledger match).
+    Set include_scanned to also include receipts awaiting their first review."""
     results: list[ApprovedReceipt] = []
     if not receipts_root.is_dir():
         return results
@@ -484,7 +556,7 @@ def list_approved_receipts(receipts_root: Path) -> list[ApprovedReceipt]:
         stage_path = latest_stage_file(chain_dir)
         if stage_path is not None:
             document = load_stage_document(stage_path)
-            if stage_status(document) == "approved":
+            if stage_status(document) == "approved" or (include_scanned and stage_status(document) == "scanned"):
                 results.append(ApprovedReceipt(stage_path=stage_path, receipt=receipt_from_stage_document(document)))
             continue
 

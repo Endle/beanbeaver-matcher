@@ -1,5 +1,5 @@
 <div id="bb-matcher">
-  <h3>Approved receipts awaiting a match</h3>
+  <h3>Receipts awaiting review or a match</h3>
   <table id="bb-matcher-receipts">
     <thead>
       <tr><th>Date</th><th>Merchant</th><th>Total</th><th></th></tr>
@@ -11,8 +11,9 @@
         <td>{{ receipt.merchant }}</td>
         <td>${{ receipt.total }}</td>
         <td>
-          <button class="bb-matcher-select" type="button">Find matches</button>
-          {% if receipt.editable %}<button class="bb-matcher-edit" type="button">Edit receipt</button>{% endif %}
+          <button class="bb-matcher-select" type="button" {% if receipt.needs_review %}hidden{% endif %}>Find matches</button>
+          {% if receipt.needs_review %}<span>Needs review</span>{% endif %}
+          {% if receipt.editable %}<button class="bb-matcher-edit" type="button">Review receipt</button>{% endif %}
           {% if receipt.duplicates %}
           <p>Possible duplicate — a matching purchase is already itemized.</p>
           {% for duplicate in receipt.duplicates %}
@@ -23,13 +24,13 @@
         </td>
       </tr>
       {% else %}
-      <tr><td colspan="4">No approved receipts awaiting a match.</td></tr>
+      <tr><td colspan="4">No receipts awaiting review or a match.</td></tr>
       {% endfor %}
     </tbody>
   </table>
 
   <section id="bb-matcher-editor" hidden>
-    <h3>Edit receipt</h3>
+    <h3>Review receipt</h3>
     <p><code id="bb-matcher-editor-path"></code></p>
     <p>
       <label>Merchant <input id="bb-matcher-edit-merchant" type="text"></label>
@@ -39,6 +40,10 @@
       <label>Total <input id="bb-matcher-edit-total" type="number" step="0.01" required></label>
     </p>
 
+    <details><summary>OCR text and warnings</summary>
+      <pre id="bb-matcher-edit-raw-text"></pre>
+      <ul id="bb-matcher-edit-warnings"></ul>
+    </details>
     <h4>Items</h4>
     <table>
       <thead><tr><th>Description</th><th>Price</th><th>Quantity</th><th>Account</th><th>Actions</th></tr></thead>
@@ -55,7 +60,7 @@
     <p><button id="bb-matcher-add-tender" type="button">Add tender</button></p>
     <datalist id="bb-matcher-accounts"></datalist>
     <p>
-      <button id="bb-matcher-save-receipt" type="button">Save receipt</button>
+      <button id="bb-matcher-save-receipt" type="button">Save review</button>
       <button id="bb-matcher-cancel-edit" type="button">Cancel</button>
     </p>
   </section>

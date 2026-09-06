@@ -156,7 +156,7 @@ def test_extension_apply_endpoint_writes_enriched_entry_and_archives_receipt(tmp
 
     # The approved-receipts list is now empty since the receipt was archived.
     report = client.get("/test/extension/MatcherExtension/")
-    assert b"No approved receipts awaiting a match." in report.data
+    assert b"No receipts awaiting review or a match." in report.data
 
 
 def test_extension_edits_legacy_split_tenders_and_recalculates_match(tmp_path):
@@ -201,7 +201,7 @@ def test_extension_edits_legacy_split_tenders_and_recalculates_match(tmp_path):
 
     report = client.get("/test/extension/MatcherExtension/")
     assert report.status_code == 200
-    assert b"Edit receipt" in report.data
+    assert b"Review receipt" in report.data
 
     edit_response = client.get(
         "/test/extension/MatcherExtension/receipt",
@@ -258,3 +258,78 @@ def test_extension_edits_legacy_split_tenders_and_recalculates_match(tmp_path):
     assert saved["items"][0]["description"] == "NEW ITEM"
     assert saved["items"][0]["ocr_note"] == "keep with new item"
     assert len(saved["tenders"]) == 1
+
+
+def test_review_scanned_receipt_preserves_source_and_matches_edited_accounts(tmp_path):
+    from pathlib import Path
+    from beanbeaver_matcher.receipts import read_receipt, list_approved_receipts
+
+    source = _write_receipt(tmp_path)
+    document = json.loads(source.read_text())
+    document["meta"]["stage"] = "scanned"
+    document["review"] = None
+    document["items"][0]["review"] = None
+    document["items"].append({"id": "removed", "description": "BAD OCR", "price": "9", "review": {"removed": True}})
+    document["warnings"] = [{"message": "Check OCR"}]
+    source.write_text(json.dumps(document))
+    original = source.read_bytes()
+    ledger = _write_ledger(tmp_path, tmp_path / "receipts")
+    client = create_app([ledger]).test_client()
+    base = "/test/extension/MatcherExtension/"
+    assert b"Review receipt" in client.get(base).data
+    assert not list_approved_receipts(tmp_path / "receipts")
+    assert client.get(base + "candidates", query_string={"stage_path": str(source)}).status_code == 409
+    edit = client.get(base + "receipt", query_string={"stage_path": str(source)}).get_json()
+    assert edit["raw_text"] == "COSTCO"
+    assert edit["warnings"] == ["Check OCR"]
+    assert len(edit["items"]) == 1
+    edit["merchant"] = "COSTCO reviewed"
+    edit["items"][0]["category"] = "Expenses:Uncategorized"
+    response = client.post(base + "edit-receipt", json=edit)
+    assert response.status_code == 200
+    saved = response.get_json()
+    reviewed = Path(saved["stage_path"])
+    assert reviewed != source
+    assert source.read_bytes() == original
+    assert read_receipt(reviewed).items[0].category == "Expenses:Uncategorized"
+    assert json.loads(reviewed.read_text())["items"][0]["description"] == "COKE ZERO"
+    assert len(list_approved_receipts(tmp_path / "receipts")) == 1
+    assert client.post(base + "edit-receipt", json=edit).status_code == 409
+    assert client.get(base + "receipt", query_string={"stage_path": str(source)}).status_code == 400
+    candidate = client.get(base + "candidates", query_string={"stage_path": str(reviewed)}).get_json()["candidates"][0]
+    applied = client.post(base + "apply", json={"stage_path": str(reviewed), **candidate})
+    assert applied.get_json()["status"] == "applied"
+    assert "Expenses:Uncategorized" in Path(applied.get_json()["enriched_path"]).read_text()
+    assert client.post(base + "edit-receipt", json=saved).status_code == 409
+
+
+def test_staged_review_validation_and_item_removal(tmp_path):
+    from pathlib import Path
+    from beanbeaver_matcher.receipts import read_receipt
+
+    source = _write_receipt(tmp_path)
+    ledger = _write_ledger(tmp_path, tmp_path / "receipts")
+    client = create_app([ledger]).test_client()
+    base = "/test/extension/MatcherExtension/"
+    edit = client.get(base + "receipt", query_string={"stage_path": str(source)}).get_json()
+    original = source.read_bytes()
+    for patch in ({"tax": "bad"}, {"source_sha256": "stale"}, {"total": "NaN"}):
+        assert client.post(base + "edit-receipt", json={**edit, **patch}).status_code == 409
+        assert source.read_bytes() == original
+    edit["items"] = [
+        {
+            "description": "Replacement",
+            "price": "54.20",
+            "quantity": 1,
+            "category": "Expenses:Uncategorized",
+            "source_index": None,
+        }
+    ]
+    saved = client.post(base + "edit-receipt", json=edit).get_json()
+    path = Path(saved["stage_path"])
+    assert [item.description for item in read_receipt(path).items] == ["Replacement"]
+    assert saved["items"][0]["source_index"] == 1
+    assert json.loads(path.read_text())["items"][0]["review"]["removed"] is True
+    saved["tax"] = ""
+    assert client.post(base + "edit-receipt", json=saved).status_code == 200
+    assert client.get(base + "receipt", query_string={"stage_path": str(ledger)}).status_code == 400

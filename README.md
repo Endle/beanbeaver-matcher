@@ -51,17 +51,24 @@ per-receipt directory. A legacy JSON is offered for matching when its sibling `.
 draft exists and no sibling `.matched` marker exists. Matching preserves explicit item account
 names and creates the legacy empty `.matched` marker.
 
-Legacy receipts can be edited from the Matcher report before choosing a candidate. The editor
+Both staged and legacy receipts can be reviewed and edited from the Matcher report before choosing a candidate. The editor
 supports merchant/date/amount fields, item accounts, and payment tenders. Split payments must
 include a card tender plus any gift-card, cash, or store-credit tender, and tender amounts must
 sum to the full receipt total.
+
+Unreviewed scans appear alongside approved receipts. Choose **Review receipt** to inspect the
+OCR text and warnings, correct receipt fields, and add, remove, or categorize items. **Save review**
+approves a scanned receipt and recalculates match candidates. Staged edits create a new review
+stage with receipt and item overrides, preserving previous stages; legacy edits update their JSON
+atomically. Stale edits and edits to matched receipts are rejected. Saving a review does not write
+to the ledger; **Apply** writes the selected match.
 
 ## Configuration
 
 Extension options (in the ledger's `custom "fava-extension"` directive):
 
 - `receipts` (required by the Matcher report): path to the directory of receipt chains to scan
-  for approved/unmatched receipts.
+  for scanned and approved/unmatched receipts.
 - `legacy_receipts` (optional): path to older flat receipt directories containing sibling
   `.json`, `.beancount`, and optional `.matched` files.
 - `merchant_families` (optional): path to a TOML file of merchant alias families (same format as
@@ -78,6 +85,6 @@ Extension options (in the ledger's `custom "fava-extension"` directive):
 ## Known v1 limitations
 
 - Item categories are not auto-assigned; itemized postings default to `Expenses:FIXME` (see
-  `enrich.py`). Re-categorize in your beancount editor after applying a match.
+  `enrich.py`). Assign accounts in the receipt editor before matching, or in your beancount editor after applying.
 - One receipt matches exactly one card transaction. A receipt split across multiple *credit
   cards* (multiple charges) is not supported.
