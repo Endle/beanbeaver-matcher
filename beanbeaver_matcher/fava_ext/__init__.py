@@ -29,13 +29,13 @@ from beanbeaver_matcher.ledger import load_open_accounts, load_transactions
 from beanbeaver_matcher.receipts import (
     ReceiptEditError,
     is_legacy_receipt_path,
-    legacy_matched_path,
     list_approved_receipts,
     load_stage_document,
     read_receipt,
     receipt_sha256,
     receipt_chain_dir,
-    update_legacy_receipt,
+    update_receipt,
+    stage_status,
 )
 from beanbeaver_matcher.scoring import find_duplicate_candidates, resolve_candidates
 
@@ -57,26 +57,28 @@ class MatcherExtension(FavaExtensionBase):
     def _ledger_path(self) -> Path:
         return Path(self.ledger.beancount_file_path)
 
-    def _legacy_edit_path(self, raw_path: object) -> Path:
+    def _receipt_edit_path(self, raw_path: object) -> Path:
         config = self._matcher_config()
-        if config.legacy_receipts_dir is None:
-            raise ReceiptEditError("Legacy receipt editing is not configured")
-        root = config.legacy_receipts_dir.resolve()
         path = Path(str(raw_path or "")).resolve()
-        try:
-            path.relative_to(root)
-        except ValueError as exc:
-            raise ReceiptEditError("Receipt must be inside the configured legacy receipt directory") from exc
-        if not path.is_file() or not is_legacy_receipt_path(path):
-            raise ReceiptEditError(f"Legacy receipt not found: {path}")
-        if legacy_matched_path(path).exists():
-            raise ReceiptEditError("Matched receipts cannot be edited")
+        for root in (config.receipts_dir, config.legacy_receipts_dir):
+            if root is None or not path.is_relative_to(root.resolve()):
+                continue
+            if any(entry.stage_path.resolve() == path for entry in list_approved_receipts(root, include_scanned=True)):
+                return path
+        raise ReceiptEditError("Only current unmatched receipts inside configured receipt directories can be edited")
+
+    def _approved_path(self, raw_path: object) -> Path:
+        path = self._receipt_edit_path(raw_path)
+        if not is_legacy_receipt_path(path) and stage_status(load_stage_document(path)) != "approved":
+            raise ReceiptEditError("Save a receipt review before matching")
         return path
 
     def _receipt_edit_payload(self, path: Path) -> dict[str, object]:
         receipt = read_receipt(path)
         source_indices = [
-            index for index, raw in enumerate(load_stage_document(path).get("items") or []) if isinstance(raw, dict)
+            index
+            for index, raw in enumerate(load_stage_document(path).get("items") or [])
+            if isinstance(raw, dict) and (is_legacy_receipt_path(path) or not (raw.get("review") or {}).get("removed"))
         ]
         accounts, errors = load_open_accounts(self._ledger_path(), as_of=receipt.date)
         if errors:
@@ -90,6 +92,8 @@ class MatcherExtension(FavaExtensionBase):
             "tax": str(receipt.tax) if receipt.tax is not None else "",
             "total": str(receipt.total),
             "accounts": accounts,
+            "raw_text": receipt.raw_text,
+            "warnings": [warning.message for warning in receipt.warnings],
             "items": [
                 {
                     "source_index": source_index,
@@ -114,9 +118,9 @@ class MatcherExtension(FavaExtensionBase):
     def receipts(self) -> list[dict[str, object]]:
         """Approved receipts awaiting a match, for the report template."""
         config = self._matcher_config()
-        approved_receipts = list_approved_receipts(config.receipts_dir)
+        approved_receipts = list_approved_receipts(config.receipts_dir, include_scanned=True)
         if config.legacy_receipts_dir is not None:
-            approved_receipts.extend(list_approved_receipts(config.legacy_receipts_dir))
+            approved_receipts.extend(list_approved_receipts(config.legacy_receipts_dir, include_scanned=True))
         snapshot = load_transactions(self._ledger_path())
         return [
             {
@@ -125,7 +129,9 @@ class MatcherExtension(FavaExtensionBase):
                 "date": approved.receipt.date.isoformat(),
                 "date_is_placeholder": approved.receipt.date_is_placeholder,
                 "total": str(approved.receipt.total),
-                "editable": is_legacy_receipt_path(approved.stage_path),
+                "editable": True,
+                "needs_review": not is_legacy_receipt_path(approved.stage_path)
+                and stage_status(load_stage_document(approved.stage_path)) == "scanned",
                 "source_sha256": receipt_sha256(approved.stage_path),
                 "duplicates": [
                     {"file_path": candidate.transaction.file_path, "details": candidate.details}
@@ -184,7 +190,7 @@ class MatcherExtension(FavaExtensionBase):
     @extension_endpoint("receipt", methods=["GET"])  # type: ignore[arg-type]
     def receipt_endpoint(self):  # noqa: ANN201 - Flask response
         try:
-            path = self._legacy_edit_path(request.args.get("stage_path"))
+            path = self._receipt_edit_path(request.args.get("stage_path"))
             return jsonify(self._receipt_edit_payload(path))
         except (ReceiptEditError, OSError, ValueError) as exc:
             return jsonify({"error": str(exc)}), 400
@@ -195,13 +201,13 @@ class MatcherExtension(FavaExtensionBase):
         if not isinstance(payload, dict):
             return jsonify({"error": "Receipt edit must be an object"}), 400
         try:
-            path = self._legacy_edit_path(payload.get("stage_path"))
+            path = self._receipt_edit_path(payload.get("stage_path"))
             raw_date = str(payload.get("date") or "").strip()
             as_of = date.fromisoformat(raw_date) if raw_date else read_receipt(path).date
             accounts, errors = load_open_accounts(self._ledger_path(), as_of=as_of)
             if errors:
                 raise ReceiptEditError(f"Ledger has errors: {errors[0]}")
-            update_legacy_receipt(
+            path = update_receipt(
                 path,
                 payload,
                 expected_sha256=str(payload.get("source_sha256") or ""),
@@ -213,9 +219,10 @@ class MatcherExtension(FavaExtensionBase):
 
     @extension_endpoint("candidates", methods=["GET"])  # type: ignore[arg-type]
     def candidates_endpoint(self):  # noqa: ANN201 - Flask response
-        stage_path = Path(request.args.get("stage_path", ""))
-        if not stage_path.is_file():
-            return jsonify({"error": f"Receipt not found: {stage_path}"}), 404
+        try:
+            stage_path = self._approved_path(request.args.get("stage_path"))
+        except (ReceiptEditError, OSError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
 
         config = self._matcher_config()
         receipt = read_receipt(stage_path)
@@ -258,8 +265,10 @@ class MatcherExtension(FavaExtensionBase):
         except (TypeError, ValueError):
             return jsonify({"error": "Invalid line_number"}), 400
 
-        if not stage_path.is_file():
-            return jsonify({"error": f"Receipt not found: {stage_path}"}), 404
+        try:
+            stage_path = self._approved_path(stage_path)
+        except (ReceiptEditError, OSError, ValueError) as exc:
+            return jsonify({"error": str(exc)}), 409
 
         config = self._matcher_config()
         receipt = read_receipt(stage_path)

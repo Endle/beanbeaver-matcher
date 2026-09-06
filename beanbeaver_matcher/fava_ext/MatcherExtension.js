@@ -105,6 +105,14 @@ export default {
       editData = data;
       editRow = row;
       editorPath.textContent = data.stage_path;
+      document.getElementById("bb-matcher-edit-raw-text").textContent = data.raw_text || "No OCR text available.";
+      const warnings = document.getElementById("bb-matcher-edit-warnings");
+      warnings.replaceChildren();
+      for (const message of data.warnings || []) {
+        const warning = document.createElement("li");
+        warning.textContent = message;
+        warnings.appendChild(warning);
+      }
       merchantInput.value = data.merchant;
       dateInput.value = data.date;
       subtotalInput.value = data.subtotal;
@@ -305,6 +313,9 @@ export default {
           showError(result.error);
           return;
         }
+        editRow.dataset.stagePath = result.stage_path;
+        editRow.dataset.sourceSha256 = result.source_sha256;
+        editRow.querySelector(".bb-matcher-select").hidden = false;
         const cells = editRow.querySelectorAll("td");
         cells[0].textContent = result.date || "UNKNOWN";
         cells[1].textContent = result.merchant;
