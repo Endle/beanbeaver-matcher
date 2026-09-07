@@ -146,9 +146,11 @@ export default {
     const loadCandidates = async (row, stagePath) => {
       currentReceiptLabel.textContent = stagePath;
       candidatesBody.innerHTML = "<tr><td colspan=\"6\">Loading…</td></tr>";
+      // Hide the editor before scrolling, not after: it sits above the candidates
+      // panel, so collapsing it later shifts the target out from under the scroll.
+      editor.hidden = true;
       candidatesSection.hidden = false;
       candidatesSection.scrollIntoView({ behavior: "smooth", block: "start" });
-      editor.hidden = true;
       warningLabel.textContent = "";
       statusLabel.textContent = "";
 
