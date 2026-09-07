@@ -102,6 +102,37 @@ export default {
       return kind;
     };
 
+    /** The candidate as it stands in the ledger: which card it charges, and the entry itself. */
+    const renderLedgerEntry = (candidate) => {
+      const wrapper = document.createElement("div");
+      const meta = document.createElement("p");
+      if (candidate.charge_account) {
+        const account = document.createElement("code");
+        account.textContent = candidate.charge_account;
+        meta.append("Charged to ", account, " \u00b7 ");
+      } else {
+        meta.append("No single funding posting \u00b7 ");
+      }
+      const location = document.createElement("code");
+      location.textContent = `${candidate.file_path}:${candidate.line_number}`;
+      meta.append(location);
+      wrapper.appendChild(meta);
+
+      const postings = candidate.postings ?? [];
+      const width = postings.reduce((longest, posting) => Math.max(longest, posting.account.length), 0);
+      const header = [candidate.date, candidate.flag ?? "*"];
+      if (candidate.payee) header.push(JSON.stringify(candidate.payee));
+      header.push(JSON.stringify(candidate.narration ?? ""));
+      const lines = postings.map((posting) => {
+        const amount = posting.number == null ? "" : `${posting.number} ${posting.currency ?? ""}`.trim();
+        return `  ${posting.account.padEnd(width)}  ${amount.padStart(14)}`.trimEnd();
+      });
+      const pre = document.createElement("pre");
+      pre.textContent = [header.join(" "), ...lines].join("\n");
+      wrapper.appendChild(pre);
+      return wrapper;
+    };
+
     const renderEditor = (data, row) => {
       editData = data;
       editRow = row;
@@ -166,19 +197,45 @@ export default {
           return;
         }
 
-        candidatesBody.innerHTML = "";
+        candidatesBody.replaceChildren();
         for (const candidate of data.candidates) {
           const tr = document.createElement("tr");
-          tr.innerHTML = `
-            <td>${Math.round(candidate.confidence * 100)}%</td>
-            <td>${candidate.date}</td>
-            <td>${candidate.payee ?? ""}</td>
-            <td>${candidate.amount ?? ""}</td>
-            <td>${candidate.details}</td>
-            <td><button type="button">Apply</button></td>
-          `;
-          const applyButton = tr.querySelector("button");
-          applyButton?.addEventListener("click", async () => {
+          const cell = (text, className) => {
+            const td = document.createElement("td");
+            if (className) td.className = className;
+            td.textContent = text;
+            tr.appendChild(td);
+          };
+          cell(`${Math.round(candidate.confidence * 100)}%`);
+          cell(candidate.date);
+          cell(candidate.payee ?? "");
+          cell(candidate.amount ?? "", "num");
+          cell(candidate.details);
+
+          const actions = document.createElement("td");
+          const applyButton = document.createElement("button");
+          applyButton.type = "button";
+          applyButton.textContent = "Apply";
+          const entryButton = document.createElement("button");
+          entryButton.type = "button";
+          entryButton.className = "muted";
+          entryButton.textContent = "Show entry";
+          actions.append(applyButton, entryButton);
+          tr.appendChild(actions);
+
+          const entryRow = document.createElement("tr");
+          entryRow.className = "bb-matcher-entry";
+          entryRow.hidden = true;
+          const entryCell = document.createElement("td");
+          entryCell.colSpan = 6;
+          entryCell.appendChild(renderLedgerEntry(candidate));
+          entryRow.appendChild(entryCell);
+          entryButton.addEventListener("click", () => {
+            entryRow.hidden = !entryRow.hidden;
+            entryButton.textContent = entryRow.hidden ? "Show entry" : "Hide entry";
+          });
+
+          applyButton.addEventListener("click", async () => {
             statusLabel.textContent = "Applying…";
             try {
               const result = await api.post("apply", {
@@ -195,7 +252,7 @@ export default {
               showError(error);
             }
           });
-          candidatesBody.appendChild(tr);
+          candidatesBody.append(tr, entryRow);
         }
       } catch (error) {
         showError(error);

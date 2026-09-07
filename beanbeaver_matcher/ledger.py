@@ -72,6 +72,7 @@ def load_transactions(ledger_path: Path | str) -> LedgerSnapshot:
                 postings=postings,
                 file_path=file_path,
                 line_number=line_number,
+                flag=entry.flag or "*",
             )
         )
 

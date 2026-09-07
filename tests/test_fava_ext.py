@@ -124,6 +124,16 @@ def test_extension_candidates_endpoint_returns_ranked_match(tmp_path):
     assert data["candidates"][0]["file_path"] == str(ledger_path)
     assert data["candidates"][0]["confidence"] > 0.9
 
+    # The candidates panel renders the entry as beancount, so it needs the whole posting
+    # list, the flag, and which account the charge actually lands on.
+    top = data["candidates"][0]
+    assert top["flag"] == "*"
+    assert top["charge_account"] == "Liabilities:CreditCard:CardA"
+    assert [(posting["account"], posting["number"]) for posting in top["postings"]] == [
+        ("Liabilities:CreditCard:CardA", "-54.20"),
+        ("Expenses:Uncategorized", "54.20"),
+    ]
+
 
 def test_extension_apply_endpoint_writes_enriched_entry_and_archives_receipt(tmp_path):
     stage_path = _write_receipt(tmp_path)
