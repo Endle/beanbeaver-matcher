@@ -249,6 +249,16 @@ class MatcherExtension(FavaExtensionBase):
                         "confidence": candidate.confidence,
                         "details": candidate.details,
                         "strength": candidate.strength,
+                        "flag": candidate.transaction.flag,
+                        "charge_account": candidate.transaction.charge_account,
+                        "postings": [
+                            {
+                                "account": posting.account,
+                                "number": str(posting.number) if posting.number is not None else None,
+                                "currency": posting.currency,
+                            }
+                            for posting in candidate.transaction.postings
+                        ],
                     }
                     for candidate in resolved.candidates
                 ],

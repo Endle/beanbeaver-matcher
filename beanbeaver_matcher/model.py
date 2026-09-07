@@ -108,6 +108,7 @@ class LedgerTransaction:
     postings: tuple[LedgerPosting, ...]
     file_path: str
     line_number: int
+    flag: str = "*"
 
     @property
     def is_enriched(self) -> bool:
