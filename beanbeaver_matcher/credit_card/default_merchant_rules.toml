@@ -34,7 +34,7 @@ keywords = ["WALMART", "WAL-MART"]
 category = "Expenses:Food:Grocery"
 
 [[rules]]
-keywords = ["SHELL", "ESSO CIRCLE K", "PETRO CANADA"]
+keywords = ["SHELL", "ESSO CIRCLE K", "PETRO CANADA", "PETRO-CANADA"]
 category = "Expenses:Driving:Gas"
 
 [[rules]]
